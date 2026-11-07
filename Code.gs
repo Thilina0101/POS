@@ -6,18 +6,20 @@
  *   "Sales"     - one row per bill (edited bills updated in place, voided bills marked VOID)
  *   "Items"     - one row per item sold (voided bills removed, so totals stay correct)
  *   "Menu"      - the menu customers see when they scan a table QR code (updated by the POS)
+ * Menu photos uploaded from the POS are saved in a Google Drive folder "Karena POS menu photos".
+ * After pasting a new version, select authorizeDrive in the function list and click Run once.
  *   "QR Orders" - orders customers send from their phones
  *
  * Security: the POS sends a secret device key. The first POS that connects sets the key.
  * If you ever need to change it, run resetPosKey() once from the Apps Script editor.
  */
 
-const VERSION = 3;
+const VERSION = 4;
 const SALES_HEADERS = ['Bill No', 'Date & Time', 'Date', 'Type', 'Table/Ref', 'Customer', 'Items',
   'Subtotal', 'Discount %', 'Discount', 'Service', 'Tax', 'Total', 'Payment', 'Paid', 'Change', 'Note',
   'Status', 'Void Reason', 'Edited / Voided At'];
 const ITEM_HEADERS = ['Bill No', 'Date', 'Item', 'Category', 'Price', 'Qty', 'Amount'];
-const MENU_HEADERS = ['Name', 'Price', 'Category', 'Available'];
+const MENU_HEADERS = ['Name', 'Price', 'Category', 'Available', 'Image', 'Description'];
 const QR_HEADERS = ['QR Order', 'Time', 'Table', 'Customer', 'Items', 'Subtotal', 'Note', 'Status', 'Bill No', 'Items JSON'];
 
 /* ---------- public (customer) GET requests ---------- */
@@ -49,6 +51,7 @@ function doPost(e) {
       case 'order': lock.waitLock(15000); saveSale(body.order); return json({ ok: true, version: VERSION });
       case 'saveMenu': lock.waitLock(15000); saveMenu(body); return json({ ok: true, version: VERSION });
       case 'setQrStatus': lock.waitLock(15000); setQrStatus(body); return json({ ok: true, version: VERSION });
+      case 'uploadImage': return json({ ok: true, version: VERSION, url: uploadImage(body) });
     }
     return json({ ok: false, error: 'Unknown action' });
   } catch (err) {
@@ -88,7 +91,8 @@ function saveMenu(body) {
   const sh = getSheet('Menu', MENU_HEADERS);
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, MENU_HEADERS.length).clearContent();
   const rows = (body.items || []).map(function (i) {
-    return [safe(i.name, 100), Number(i.price) || 0, safe(i.category || 'Other', 50), i.available !== false];
+    return [safe(i.name, 100), Number(i.price) || 0, safe(i.category || 'Other', 50), i.available !== false,
+      safeUrl(i.image), safe(i.description, 150)];
   });
   if (rows.length) sh.getRange(2, 1, rows.length, MENU_HEADERS.length).setValues(rows);
   const s = body.shop || {};
@@ -109,12 +113,39 @@ function getMenu() {
     sh.getRange(2, 1, sh.getLastRow() - 1, MENU_HEADERS.length).getValues().forEach(function (r) {
       if (r[0] === '') return;
       items.push({ name: String(r[0]), price: Number(r[1]) || 0, category: String(r[2] || 'Other'),
-        available: r[3] !== false && String(r[3]).toUpperCase() !== 'FALSE' });
+        available: r[3] !== false && String(r[3]).toUpperCase() !== 'FALSE',
+        image: safeUrl(r[4]), description: String(r[5] || '') });
     });
   }
   const out = { shop: JSON.parse(PropertiesService.getScriptProperties().getProperty('SHOP') || '{}'), items: items };
   try { cache.put('menu', JSON.stringify(out), 300); } catch (e) {}
   return out;
+}
+
+/* ---------- menu photos (Google Drive) ---------- */
+function uploadImage(body) {
+  const m = String(body.data || '').match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
+  if (!m) throw new Error('Not an image');
+  if (m[2].length > 3000000) throw new Error('Image is too large');
+  const blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], 'menu-' + Date.now() + '.jpg');
+  const file = imageFolder().createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w600';
+}
+
+function imageFolder() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('IMG_FOLDER');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) {} }
+  const folder = DriveApp.createFolder('Karena POS menu photos');
+  props.setProperty('IMG_FOLDER', folder.getId());
+  return folder;
+}
+
+/** Run this once from the editor so Google asks for Drive permission (needed for menu photos). */
+function authorizeDrive() {
+  DriveApp.getRootFolder();
+  Logger.log('Drive access OK');
 }
 
 /* ---------- QR orders ---------- */
@@ -219,6 +250,11 @@ function safe(v, max) {
   let s = String(v == null ? '' : v).slice(0, max || 100);
   if (/^[=+\-@]/.test(s)) s = "'" + s;
   return s;
+}
+
+function safeUrl(v) {
+  const s = String(v || '').trim();
+  return /^https:\/\/[^\s"'<>]+$/i.test(s) ? s.slice(0, 500) : '';
 }
 
 function parseJson(s) {

@@ -52,6 +52,15 @@ Customers scan a QR code on their table, see your menu on their phone and send t
 3. Open **📱 QR Orders**, click **⬆ Update online menu**, then enter your number of tables and click **Generate QR codes**.
 4. Click **Test link** on one code to check the customer page works, then click **🖨 Print QR codes** and put them on your tables.
 
+**Menu photos (Code.gs version 4):**
+1. After pasting the new Code.gs and clicking 💾 Save, choose **authorizeDrive** in the function list at the top of the Apps Script editor, then click ▶ **Run**.
+   Allow access when Google asks. This lets the script save photos to your Google Drive.
+2. Deploy as a new version (Manage deployments → ✏️ Edit → New version → Deploy).
+3. In the POS, go to **🍽️ Menu**, click **Edit** on a dish, choose a **Photo** (and optionally add a description), and click **Save**.
+   Photos are shrunk automatically and saved in a Drive folder called **Karena POS menu photos**.
+   Anyone with the link can view that folder's photos, which is needed so customers can see them.
+4. Customers see the photos within about 5 minutes. They can tap a photo to make it bigger.
+
 **Daily use:**
 - New orders appear with a 🔔 beep (click anywhere on the POS once after opening it so sound is allowed).
 - **✔ Accept** prints a kitchen slip. **Reject** tells the customer it wasn't accepted.

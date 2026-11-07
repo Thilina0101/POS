@@ -94,6 +94,9 @@
   .qrtile{text-align:center}
   .qrtile img{width:160px;height:160px;margin:8px 0}
   .item.soldout{opacity:.45;cursor:not-allowed}
+  .tileimg{width:100%;height:80px;object-fit:cover;border-radius:8px;margin-bottom:6px;background:#eee}
+  .thumb{width:48px;height:48px;object-fit:cover;border-radius:8px;display:block;background:#eee}
+  #mImgPrev img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
   .actions{white-space:nowrap;text-align:right}
   .actions .btn{margin-left:4px}
 
@@ -219,6 +222,14 @@
         <div style="flex:2"><label>Name</label><input id="mName"></div>
         <div><label>Price</label><input id="mPrice" type="number" min="0" step="0.01"></div>
         <div><label>Category</label><input id="mCat" list="catList"><datalist id="catList"></datalist></div>
+      </div>
+      <div class="toolbar" style="margin:10px 0 0">
+        <div style="flex:2"><label>Description (optional, customers see it)</label><input id="mDesc" maxlength="150" placeholder="e.g. Crispy pork cutlet with Japanese curry"></div>
+        <div style="flex:2"><label>Photo</label>
+          <input id="mImgFile" type="file" accept="image/*">
+          <input id="mImgUrl" placeholder="…or paste an image link (https://…)" style="margin-top:6px">
+        </div>
+        <div id="mImgPrev"></div>
         <button class="btn" id="mSave">Save</button>
         <button class="btn secondary" id="mCancel" style="display:none">Cancel</button>
       </div>
@@ -352,7 +363,7 @@ function renderGrid(){
   const list = menu.filter(m => (activeCat==='All' || (m.category||'Other')===activeCat) && (!q || m.name.toLowerCase().includes(q)));
   $('grid').innerHTML = list.map(m=>{
     const out = m.available===false;
-    return `<button class="item${out?' soldout':''}" data-id="${esc(m.id)}" ${out?'disabled':''}><span class="n">${esc(m.name)}</span><span class="p">${out?'Sold out':money(m.price)}</span></button>`;
+    return `<button class="item${out?' soldout':''}" data-id="${esc(m.id)}" ${out?'disabled':''}>${m.image?`<img class="tileimg" src="${esc(m.image)}" alt="" loading="lazy" onerror="imgFallback(this)">`:''}<span class="n">${esc(m.name)}</span><span class="p">${out?'Sold out':money(m.price)}</span></button>`;
   }).join('') || '<div class="empty">No items. Add some in the Menu tab.</div>';
   $('grid').querySelectorAll('.item').forEach(b=>b.onclick=()=>addToCart(b.dataset.id));
 }
@@ -537,6 +548,7 @@ async function postToSheet(payload, url, key){
   const r = await fetch(url || settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body:JSON.stringify({...payload, key: key || settings.posKey})});
   const j = await r.json();
+  if(j.error==='Unknown action') throw new Error('Please update Code.gs in Google Apps Script to the latest version');
   if(j.error==='BAD_KEY') throw new Error('This device\'s key does not match your Google Sheet. Copy the POS device key from your first device (Settings).');
   if(!j.ok) throw new Error(j.error||'Sheet error');
   return j;
@@ -648,8 +660,9 @@ let editingId = null;
 function renderMenuTable(){
   $('catList').innerHTML = [...new Set(menu.map(m=>m.category))].map(c=>`<option value="${esc(c)}">`).join('');
   const sorted = menu.slice().sort((a,b)=>(a.category||'').localeCompare(b.category||'')||a.name.localeCompare(b.name));
-  $('menuTable').innerHTML = '<tr><th>Name</th><th>Category</th><th class="num">Price</th><th>Available</th><th></th></tr>' + sorted.map(m=>`
-    <tr><td>${esc(m.name)}</td><td>${esc(m.category)}</td><td class="num">${money(m.price)}</td>
+  $('menuTable').innerHTML = '<tr><th>Photo</th><th>Name</th><th>Category</th><th class="num">Price</th><th>Available</th><th></th></tr>' + sorted.map(m=>`
+    <tr><td>${m.image?`<img class="thumb" src="${esc(m.image)}" alt="" loading="lazy" onerror="imgFallback(this)">`:'<span class="hint">—</span>'}</td>
+    <td>${esc(m.name)}${m.description?`<div class="hint">${esc(m.description)}</div>`:''}</td><td>${esc(m.category)}</td><td class="num">${money(m.price)}</td>
     <td><button class="btn small ${m.available===false?'danger':'secondary'}" data-av="${esc(m.id)}">${m.available===false?'Sold out':'✔ On sale'}</button></td>
     <td style="text-align:right;white-space:nowrap"><button class="btn secondary small" data-e="${esc(m.id)}">Edit</button> <button class="btn danger small" data-x="${esc(m.id)}">Delete</button></td></tr>`).join('');
   $('menuTable').querySelectorAll('[data-av]').forEach(b=>b.onclick=()=>{
@@ -658,6 +671,7 @@ function renderMenuTable(){
   $('menuTable').querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{
     const m = menu.find(x=>x.id===b.dataset.e); editingId=m.id;
     $('mName').value=m.name; $('mPrice').value=m.price; $('mCat').value=m.category;
+    $('mDesc').value=m.description||''; $('mImgUrl').value=m.image||''; $('mImgFile').value=''; showImgPreview(m.image);
     $('menuFormTitle').textContent='Edit menu item'; $('mCancel').style.display='';
     $('mName').focus();
   });
@@ -676,20 +690,61 @@ function publishMenu(now){
   pubTimer = setTimeout(async ()=>{
     try{
       await postToSheet({action:'saveMenu',
-        items: menu.map(m=>({name:m.name, price:Number(m.price), category:m.category||'Other', available:m.available!==false})),
+        items: menu.map(m=>({name:m.name, price:Number(m.price), category:m.category||'Other', available:m.available!==false,
+          image:m.image||'', description:m.description||''})),
         shop: {name:settings.shopName, currency:settings.currency, servicePct:settings.servicePct, taxPct:settings.taxPct}});
       if(now) toast('✅ Online menu updated');
     }catch(e){ toast('Could not update online menu: '+e.message); }
   }, now ? 0 : 800);
 }
-function resetMenuForm(){ editingId=null; $('mName').value=$('mPrice').value=$('mCat').value=''; $('menuFormTitle').textContent='Add menu item'; $('mCancel').style.display='none'; }
-$('mSave').onclick = ()=>{
+function resetMenuForm(){ editingId=null; $('mName').value=$('mPrice').value=$('mCat').value=$('mDesc').value=$('mImgUrl').value=$('mImgFile').value=''; showImgPreview(''); $('menuFormTitle').textContent='Add menu item'; $('mCancel').style.display='none'; }
+$('mSave').onclick = async ()=>{
   const name=$('mName').value.trim(), price=Number($('mPrice').value), category=$('mCat').value.trim()||'Other';
   if(!name || !(price>=0) || $('mPrice').value==='') return toast('Enter a name and price');
-  if(editingId) Object.assign(menu.find(m=>m.id===editingId), {name,price,category});
-  else menu.push({id:'m'+Date.now(), name, price, category});
+  const description = $('mDesc').value.trim();
+  let image = $('mImgUrl').value.trim();
+  if(image && !/^https:\/\//i.test(image)) return toast('The image link must start with https://');
+  const file = $('mImgFile').files[0];
+  if(file){
+    if(!settings.sheetUrl) return toast('Connect Google Sheet in Settings to upload photos (or paste an image link)');
+    const btn = $('mSave'); btn.disabled = true; btn.textContent = 'Uploading photo…';
+    try{
+      const data = await resizeImage(file, 600);
+      image = (await postToSheet({action:'uploadImage', data})).url;
+    }catch(e){ toast('Photo upload failed: '+e.message); return; }
+    finally{ btn.disabled = false; btn.textContent = 'Save'; }
+  }
+  const fields = {name, price, category, description, image};
+  if(editingId) Object.assign(menu.find(m=>m.id===editingId), fields);
+  else menu.push({id:'m'+Date.now(), ...fields});
   resetMenuForm(); saveMenu(); toast('Menu saved');
 };
+$('mImgFile').onchange = ()=>{ const f=$('mImgFile').files[0]; if(f) showImgPreview(URL.createObjectURL(f)); };
+$('mImgUrl').oninput = ()=>{ if(!$('mImgFile').files[0]) showImgPreview($('mImgUrl').value.trim()); };
+function showImgPreview(src){
+  $('mImgPrev').innerHTML = src && /^(https:|blob:)/.test(src) ? `<img src="${esc(src)}" alt="Photo preview" onerror="imgFallback(this)">` : '';
+}
+function resizeImage(file, max){
+  return new Promise((resolve, reject)=>{
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      const s = Math.min(1, max/Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*s); c.height = Math.round(img.height*s);
+      const ctx = c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('That file is not a photo')); };
+    img.src = url;
+  });
+}
+// Google Drive photos: try a second link format if the first one doesn't load
+function imgFallback(el){
+  const m = el.src.match(/drive\.google\.com\/thumbnail\?id=([^&]+)/);
+  if(m && !el.dataset.fb){ el.dataset.fb = '1'; el.src = 'https://lh3.googleusercontent.com/d/'+m[1]+'=w600'; }
+  else el.style.visibility = 'hidden';
+}
 $('mCancel').onclick = resetMenuForm;
 
 /* ---------- Settings ---------- */
@@ -713,7 +768,7 @@ $('sTest').onclick = async ()=>{
   if(!url) return toast('Paste your Web App URL first');
   try{
     const j = await postToSheet({action:'ping'}, url, $('sKey').value.trim());
-    toast(j.version>=3 ? '✅ Connected to Google Sheet!' : '⚠️ Connected, but please update Code.gs to the new version');
+    toast(j.version>=4 ? '✅ Connected to Google Sheet!' : '⚠️ Connected, but please update Code.gs to the new version');
   }
   catch(e){ toast('❌ Could not connect: '+e.message); }
 };
