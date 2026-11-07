@@ -225,13 +225,14 @@ const LS = {
   set(k, v){ localStorage.setItem('pos_'+k, JSON.stringify(v)); }
 };
 const DEFAULT_MENU = [
-  ['Chicken Fried Rice',950,'Rice'],['Vegetable Fried Rice',750,'Rice'],['Rice & Curry (Chicken)',650,'Rice'],
-  ['Chicken Kottu',900,'Kottu'],['Cheese Kottu',1100,'Kottu'],['Egg Kottu',700,'Kottu'],
-  ['Chicken Burger',850,'Snacks'],['French Fries',450,'Snacks'],['Chicken Submarine',800,'Snacks'],
-  ['Tea',120,'Drinks'],['Coffee',200,'Drinks'],['Fresh Juice',350,'Drinks'],['Soft Drink',250,'Drinks'],['Water Bottle',100,'Drinks']
+  ['Chicken Fried Rice',70,'Rice'],['Vegetable Fried Rice',60,'Rice'],['Rice & Curry (Chicken)',80,'Rice'],
+  ['Chicken Kottu',120,'Kottu'],['Cheese Kottu',150,'Kottu'],['Egg Kottu',100,'Kottu'],
+  ['Chicken Burger',120,'Snacks'],['French Fries',60,'Snacks'],['Chicken Submarine',110,'Snacks'],
+  ['Tea',30,'Drinks'],['Coffee',45,'Drinks'],['Fresh Juice',50,'Drinks'],['Soft Drink',25,'Drinks'],['Water Bottle',15,'Drinks']
 ].map(([name,price,category],i)=>({id:'m'+i,name,price,category}));
 
-let settings = Object.assign({shopName:'My Restaurant',address:'',currency:'Rs.',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
+let settings = Object.assign({shopName:'My Restaurant',address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
+if(settings.currency==='Rs.'){ settings.currency='฿'; LS.set('settings',settings); }
 let menu = LS.get('menu', DEFAULT_MENU);
 let orders = LS.get('orders', []);
 let cart = [];
@@ -509,7 +510,7 @@ function loadSettingsForm(){
   $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
 }
 function readSettingsForm(){
-  settings = {shopName:$('sName').value.trim()||'My Restaurant', address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'Rs.',
+  settings = {shopName:$('sName').value.trim()||'My Restaurant', address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
     servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim()};
 }
 $('sSave').onclick = ()=>{ readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending(); };
