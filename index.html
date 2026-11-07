@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Karena Curry Rice POS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
     --bg:#f4f5f7; --panel:#fff; --ink:#1d2330; --muted:#6b7280; --line:#e3e6eb;
@@ -85,6 +86,14 @@
   .editbar{background:#fef3c7;border:1px solid #f5d08a;border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);align-items:center;justify-content:center;z-index:8;padding:16px}
   .modal .card{width:100%;max-width:300px;display:grid;gap:10px}
+  .nbadge{background:#ef4444;color:#fff;border-radius:999px;padding:1px 7px;font-size:12px;margin-left:4px;font-weight:700}
+  .qrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:14px}
+  .qrcard ul{margin:8px 0;padding-left:18px}
+  .qrcard.new{border-color:#f59e0b;box-shadow:0 0 0 2px #fde68a}
+  .qrhead{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .qrtile{text-align:center}
+  .qrtile img{width:160px;height:160px;margin:8px 0}
+  .item.soldout{opacity:.45;cursor:not-allowed}
   .actions{white-space:nowrap;text-align:right}
   .actions .btn{margin-left:4px}
 
@@ -110,6 +119,7 @@
   <h1 id="hdrName">คาเรนะ ข้าวแกงกะหรี่ญี่ปุ่นนะ Karena Curry Rice</h1>
   <nav>
     <button data-view="pos" class="active">🧾 New Order</button>
+    <button data-view="qr">📱 QR Orders<span id="qrBadge" class="nbadge" style="display:none"></span></button>
     <button data-view="sales">📊 Sales</button>
     <button data-view="menu">🍽️ Menu</button>
     <button data-view="settings">⚙️ Settings</button>
@@ -156,6 +166,27 @@
           <button class="btn" id="payBtn">🖨 Complete & Print</button>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- QR ORDERS -->
+  <section id="view-qr" class="view">
+    <div class="toolbar">
+      <button class="btn secondary" id="qrRefresh">⟳ Refresh</button>
+      <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="qrAutoSlip" style="width:auto" checked> Print kitchen slip when accepting</label>
+    </div>
+    <div id="qrList"></div>
+    <div class="card" style="margin-top:16px">
+      <h3 style="margin-top:0">Table QR codes</h3>
+      <div class="hint" id="qrSetupHint" style="margin-bottom:10px"></div>
+      <div class="toolbar">
+        <div><label>Number of tables</label><input type="number" id="qrTables" min="0" max="100" value="10"></div>
+        <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="qrTakeaway" style="width:auto" checked> Add a Takeaway QR</label>
+        <button class="btn" id="qrMake">Generate QR codes</button>
+        <button class="btn secondary" id="qrPrint">🖨 Print QR codes</button>
+        <button class="btn secondary" id="qrPublish">⬆ Update online menu</button>
+      </div>
+      <div class="qrgrid" id="qrCodes"></div>
     </div>
   </section>
 
@@ -216,6 +247,11 @@
         <input id="sUrl" placeholder="https://script.google.com/macros/s/.../exec">
         <div class="hint">See SETUP-GOOGLE-SHEETS.md for the 5-minute setup. Leave empty to work offline only (you can still export to Excel).</div>
       </div>
+      <div>
+        <label>POS device key</label>
+        <input id="sKey" autocomplete="off">
+        <div class="hint">Protects your Google Sheet from strangers. Every POS device must use the same key (Backup → Restore copies it).</div>
+      </div>
       <div class="row">
         <button class="btn" id="sSave">Save settings</button>
         <button class="btn secondary" id="sTest">Test connection</button>
@@ -258,10 +294,17 @@ const SHOP_NAME = 'คาเรนะ ข้าวแกงกะหรี่ญ
 let settings = Object.assign({shopName:SHOP_NAME,address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
 if(settings.currency==='Rs.'){ settings.currency='฿'; LS.set('settings',settings); }
 if(settings.shopName==='My Restaurant'){ settings.shopName=SHOP_NAME; LS.set('settings',settings); }
+if(!settings.posKey){
+  const a = new Uint8Array(12); crypto.getRandomValues(a);
+  settings.posKey = [...a].map(b=>b.toString(16).padStart(2,'0')).join('');
+  LS.set('settings',settings);
+}
 let menu = LS.get('menu', DEFAULT_MENU);
 let orders = LS.get('orders', []);
 let cart = [];
 let editingOrderId = null;
+let cartQrIds = [];     // QR orders added to the current cart
+let qrOrders = [];      // NEW + ACCEPTED QR orders from the Google Sheet
 let payMethod = 'Cash';
 let activeCat = 'All';
 
@@ -279,6 +322,7 @@ function showView(name){
   if(name==='sales') renderSales();
   if(name==='menu') renderMenuTable();
   if(name==='settings') loadSettingsForm();
+  if(name==='qr'){ renderQrOrders(); renderQrHint(); pollQr(); }
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
 
@@ -306,7 +350,10 @@ function renderCats(){
 function renderGrid(){
   const q = $('search').value.trim().toLowerCase();
   const list = menu.filter(m => (activeCat==='All' || (m.category||'Other')===activeCat) && (!q || m.name.toLowerCase().includes(q)));
-  $('grid').innerHTML = list.map(m=>`<button class="item" data-id="${esc(m.id)}"><span class="n">${esc(m.name)}</span><span class="p">${money(m.price)}</span></button>`).join('') || '<div class="empty">No items. Add some in the Menu tab.</div>';
+  $('grid').innerHTML = list.map(m=>{
+    const out = m.available===false;
+    return `<button class="item${out?' soldout':''}" data-id="${esc(m.id)}" ${out?'disabled':''}><span class="n">${esc(m.name)}</span><span class="p">${out?'Sold out':money(m.price)}</span></button>`;
+  }).join('') || '<div class="empty">No items. Add some in the Menu tab.</div>';
   $('grid').querySelectorAll('.item').forEach(b=>b.onclick=()=>addToCart(b.dataset.id));
 }
 $('search').oninput = renderGrid;
@@ -348,6 +395,10 @@ function renderCart(){
     <div class="grand"><span>TOTAL</span><span>${money(t.total)}</span></div>`;
   updateChange();
   $('payBtn').disabled = $('completeBtn').disabled = !cart.length;
+  if(!editingOrderId){
+    $('editBar').style.display = cartQrIds.length ? 'flex' : 'none';
+    if(cartQrIds.length) $('editBar').innerHTML = `<span>📱 From QR: <b>${cartQrIds.map(esc).join(', ')}</b></span>`;
+  }
   $('completeBtn').textContent = editingOrderId ? '✔ Save changes' : '✔ Complete';
   $('payBtn').textContent = editingOrderId ? '🖨 Save & Print' : '🖨 Complete & Print';
 }
@@ -370,7 +421,7 @@ $('clearBtn').onclick = ()=>{
   if(!cart.length || confirm('Clear this order?')) resetOrder();
 };
 function resetOrder(){
-  cart=[]; editingOrderId=null; $('editBar').style.display='none';
+  cart=[]; editingOrderId=null; cartQrIds=[]; $('editBar').style.display='none';
   ['tableNo','customer','note','cashIn'].forEach(i=>$(i).value=''); $('discount').value=0; setPay('Cash'); renderCart();
 }
 function nextOrderId(){
@@ -389,7 +440,8 @@ function completeSale(print){
   const data = {
     type: $('orderType').value, table: $('tableNo').value.trim(), customer: $('customer').value.trim(), note: $('note').value.trim(),
     items: cart.map(l=>({name:l.name,category:l.category,price:l.price,qty:l.qty,amount:round2(l.price*l.qty)})),
-    ...t, payment: payMethod, paid: round2(paid), change: round2(paid-t.total), synced:false
+    ...t, payment: payMethod, paid: round2(paid), change: round2(paid-t.total), synced:false,
+    qrIds: cartQrIds.slice(), qrMarked: !cartQrIds.length
   };
   let order;
   const wasEdit = !!editingOrderId;
@@ -404,6 +456,7 @@ function completeSale(print){
   if(print) printReceipt(order);
   resetOrder();
   toast((wasEdit ? 'Order updated: ' : 'Sale saved: ')+order.id);
+  if(data.qrIds.length){ qrOrders = qrOrders.filter(q=>!data.qrIds.includes(q.id)); renderQrAll(); }
   syncPending();
   if(wasEdit) showView('sales');
 }
@@ -417,6 +470,7 @@ async function startEdit(id){
   resetOrder();
   editingOrderId = o.id;
   cart = o.items.map((i,n)=>{ const m = menu.find(m=>m.name===i.name); return {id:m?m.id:'old'+n, name:i.name, price:Number(i.price), category:i.category||'', qty:i.qty}; });
+  cartQrIds = (o.qrIds||[]).slice();
   $('orderType').value=o.type; $('tableNo').value=o.table||''; $('customer').value=o.customer||''; $('note').value=o.note||''; $('discount').value=o.discPct||0;
   setPay(o.payment);
   if(o.payment==='Cash' && o.paid>o.total) $('cashIn').value=o.paid;
@@ -479,9 +533,11 @@ function refreshSyncLabel(){
   else if(p) setSync('pending', p+' sale(s) waiting to sync');
   else setSync('ok','Google Sheet synced');
 }
-async function postToSheet(payload, url){
-  const r = await fetch(url || settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload)});
+async function postToSheet(payload, url, key){
+  const r = await fetch(url || settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify({...payload, key: key || settings.posKey})});
   const j = await r.json();
+  if(j.error==='BAD_KEY') throw new Error('This device\'s key does not match your Google Sheet. Copy the POS device key from your first device (Settings).');
   if(!j.ok) throw new Error(j.error||'Sheet error');
   return j;
 }
@@ -498,6 +554,10 @@ async function syncPending(showMsg){
         voidedLocal: o.voidedAt ? new Date(o.voidedAt).toLocaleString() : ''}});
       // Old Code.gs (version 1) can't update existing rows: keep these pending until it's updated
       if((o.status==='void' || o.editedAt) && !(j.version>=2)){ oldScript = true; continue; }
+      if(o.qrIds && o.qrIds.length && !o.qrMarked){
+        for(const q of o.qrIds) await postToSheet({action:'setQrStatus', id:q, status:'PAID', bill:o.id});
+        o.qrMarked = true;
+      }
       o.synced = true; done++; LS.set('orders', orders);
     }catch(e){ failed = true; console.warn('Sync failed', e); break; }
   }
@@ -588,9 +648,13 @@ let editingId = null;
 function renderMenuTable(){
   $('catList').innerHTML = [...new Set(menu.map(m=>m.category))].map(c=>`<option value="${esc(c)}">`).join('');
   const sorted = menu.slice().sort((a,b)=>(a.category||'').localeCompare(b.category||'')||a.name.localeCompare(b.name));
-  $('menuTable').innerHTML = '<tr><th>Name</th><th>Category</th><th class="num">Price</th><th></th></tr>' + sorted.map(m=>`
+  $('menuTable').innerHTML = '<tr><th>Name</th><th>Category</th><th class="num">Price</th><th>Available</th><th></th></tr>' + sorted.map(m=>`
     <tr><td>${esc(m.name)}</td><td>${esc(m.category)}</td><td class="num">${money(m.price)}</td>
+    <td><button class="btn small ${m.available===false?'danger':'secondary'}" data-av="${esc(m.id)}">${m.available===false?'Sold out':'✔ On sale'}</button></td>
     <td style="text-align:right;white-space:nowrap"><button class="btn secondary small" data-e="${esc(m.id)}">Edit</button> <button class="btn danger small" data-x="${esc(m.id)}">Delete</button></td></tr>`).join('');
+  $('menuTable').querySelectorAll('[data-av]').forEach(b=>b.onclick=()=>{
+    const m = menu.find(x=>x.id===b.dataset.av); m.available = m.available===false; saveMenu();
+  });
   $('menuTable').querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{
     const m = menu.find(x=>x.id===b.dataset.e); editingId=m.id;
     $('mName').value=m.name; $('mPrice').value=m.price; $('mCat').value=m.category;
@@ -602,7 +666,22 @@ function renderMenuTable(){
     if(confirm('Delete "'+m.name+'"?')){ menu=menu.filter(x=>x.id!==m.id); saveMenu(); }
   });
 }
-function saveMenu(){ LS.set('menu',menu); renderMenuTable(); renderCats(); renderGrid(); }
+function saveMenu(){ LS.set('menu',menu); renderMenuTable(); renderCats(); renderGrid(); publishMenu(); }
+
+/* ---------- online menu for customer QR ordering ---------- */
+let pubTimer;
+function publishMenu(now){
+  if(!settings.sheetUrl) return now && toast('Connect your Google Sheet in Settings first');
+  clearTimeout(pubTimer);
+  pubTimer = setTimeout(async ()=>{
+    try{
+      await postToSheet({action:'saveMenu',
+        items: menu.map(m=>({name:m.name, price:Number(m.price), category:m.category||'Other', available:m.available!==false})),
+        shop: {name:settings.shopName, currency:settings.currency, servicePct:settings.servicePct, taxPct:settings.taxPct}});
+      if(now) toast('✅ Online menu updated');
+    }catch(e){ toast('Could not update online menu: '+e.message); }
+  }, now ? 0 : 800);
+}
 function resetMenuForm(){ editingId=null; $('mName').value=$('mPrice').value=$('mCat').value=''; $('menuFormTitle').textContent='Add menu item'; $('mCancel').style.display='none'; }
 $('mSave').onclick = ()=>{
   const name=$('mName').value.trim(), price=Number($('mPrice').value), category=$('mCat').value.trim()||'Other';
@@ -618,22 +697,23 @@ function loadSettingsForm(){
   $('sName').value=settings.shopName; $('sAddr').value=settings.address; $('sCur').value=settings.currency;
   $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
   $('sPin').value=settings.pin||'';
+  $('sKey').value=settings.posKey||'';
 }
 function readSettingsForm(){
   settings = {shopName:$('sName').value.trim()||SHOP_NAME, address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
     servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim(),
-    pin:$('sPin').value.trim()};
+    pin:$('sPin').value.trim(), posKey:$('sKey').value.trim()||settings.posKey};
 }
 $('sSave').onclick = async ()=>{
   if(!(await requirePin())) return;
-  readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending();
+  readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending(); publishMenu();
 };
 $('sTest').onclick = async ()=>{
   const url = $('sUrl').value.trim();
   if(!url) return toast('Paste your Web App URL first');
   try{
-    const j = await postToSheet({action:'ping'}, url);
-    toast(j.version>=2 ? '✅ Connected to Google Sheet!' : '⚠️ Connected, but please update Code.gs to the new version');
+    const j = await postToSheet({action:'ping'}, url, $('sKey').value.trim());
+    toast(j.version>=3 ? '✅ Connected to Google Sheet!' : '⚠️ Connected, but please update Code.gs to the new version');
   }
   catch(e){ toast('❌ Could not connect: '+e.message); }
 };
@@ -653,9 +733,166 @@ $('restoreFile').onchange = e=>{
   e.target.value='';
 };
 
+/* ---------- QR orders ---------- */
+const tableLabel = t => { t = String(t||''); return /^\d+$/.test(t) ? 'Table '+t : (t||'Walk-in'); };
+const thaiLabel = t => /^\d+$/.test(t) ? `โต๊ะ ${t} · Table ${t}` : 'กลับบ้าน · Takeaway';
+let seenQr = new Set(LS.get('seenQr', []));
+let polling = false;
+
+async function pollQr(manual){
+  if(!settings.sheetUrl || polling) return;
+  polling = true;
+  try{
+    const j = await postToSheet({action:'getQrOrders'});
+    qrOrders = j.orders || [];
+    const fresh = qrOrders.filter(q=>q.status==='NEW' && !seenQr.has(q.id));
+    if(fresh.length){
+      fresh.forEach(q=>seenQr.add(q.id));
+      LS.set('seenQr', [...seenQr].slice(-300));
+      beep();
+      toast(`🔔 New QR order — ${tableLabel(fresh[0].table)}`);
+    }
+    renderQrAll();
+    if(manual) toast('QR orders updated');
+  }catch(e){ if(manual) toast('Could not load QR orders: '+e.message); }
+  polling = false;
+}
+
+function renderQrAll(){
+  const n = qrOrders.filter(q=>q.status==='NEW').length;
+  $('qrBadge').style.display = n ? '' : 'none';
+  $('qrBadge').textContent = n;
+  if($('view-qr').classList.contains('active')) renderQrOrders();
+}
+
+function renderQrOrders(){
+  const visible = qrOrders.filter(q=>!cartQrIds.includes(q.id));
+  const newO = visible.filter(q=>q.status==='NEW'), acc = visible.filter(q=>q.status==='ACCEPTED');
+  const card = q => `<div class="card qrcard ${q.status==='NEW'?'new':''}">
+    <div class="qrhead"><b style="font-size:17px">${esc(tableLabel(q.table))}</b><span class="hint">${esc(q.id)} · ${new Date(q.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div>
+    ${q.customer?`<div style="margin-top:4px">👤 ${esc(q.customer)}</div>`:''}
+    <ul>${(q.items||[]).map(i=>`<li>${i.qty} × ${esc(i.name)}</li>`).join('')}</ul>
+    ${q.note?`<div class="hint">📝 ${esc(q.note)}</div>`:''}
+    <div style="margin:8px 0;font-weight:700">${money(q.subtotal)}</div>
+    <div class="row">${q.status==='NEW'
+      ? `<button class="btn danger small" data-qrej="${esc(q.id)}">Reject</button><button class="btn small" data-qacc="${esc(q.id)}">✔ Accept</button>`
+      : `<button class="btn secondary small" data-qslip="${esc(q.id)}">🖨 Kitchen slip</button><button class="btn small" data-qbill="${esc(q.id)}">💵 Add to bill</button>`}</div>
+  </div>`;
+  $('qrList').innerHTML = !settings.sheetUrl ? '<div class="card empty">Connect your Google Sheet in ⚙️ Settings to receive QR orders.</div>' :
+    `<h3>New orders (${newO.length})</h3><div class="qrgrid">${newO.map(card).join('') || '<div class="hint">No new orders</div>'}</div>
+     <h3>Accepted — waiting for payment (${acc.length})</h3><div class="qrgrid">${acc.map(card).join('') || '<div class="hint">None</div>'}</div>`;
+  $('qrList').querySelectorAll('[data-qacc]').forEach(b=>b.onclick=()=>setQr(b.dataset.qacc,'ACCEPTED'));
+  $('qrList').querySelectorAll('[data-qrej]').forEach(b=>b.onclick=()=>{ if(confirm('Reject this order? The customer will see that it was not accepted.')) setQr(b.dataset.qrej,'REJECTED'); });
+  $('qrList').querySelectorAll('[data-qslip]').forEach(b=>b.onclick=()=>printKitchenSlip(qrOrders.find(q=>q.id===b.dataset.qslip)));
+  $('qrList').querySelectorAll('[data-qbill]').forEach(b=>b.onclick=()=>addQrToBill(b.dataset.qbill));
+}
+
+async function setQr(id, status){
+  const q = qrOrders.find(x=>x.id===id); if(!q) return;
+  try{
+    await postToSheet({action:'setQrStatus', id, status});
+    if(status==='REJECTED') qrOrders = qrOrders.filter(x=>x.id!==id); else q.status = status;
+    renderQrAll();
+    if(status==='ACCEPTED' && $('qrAutoSlip').checked) printKitchenSlip(q);
+  }catch(e){ toast('Could not update order: '+e.message); }
+}
+
+function addQrToBill(id){
+  const q = qrOrders.find(x=>x.id===id); if(!q) return;
+  if(editingOrderId) return toast('Finish or cancel the order you are editing first');
+  if(cart.length && !cartQrIds.length && !confirm('Add these items to the order already in the cart?')) return;
+  (q.items||[]).forEach(i=>{
+    const price = Number(i.price);
+    const line = cart.find(l=>l.name===i.name && l.price===price);
+    if(line) line.qty += i.qty;
+    else { const m = menu.find(m=>m.name===i.name && Number(m.price)===price); cart.push({id: m ? m.id : 'qr-'+q.id+'-'+i.name, name:i.name, price, category:i.category||'', qty:i.qty}); }
+  });
+  const t = String(q.table||'');
+  if(/^\d+$/.test(t)){ $('orderType').value='Dine-in'; $('tableNo').value=t; }
+  else if(/takeaway/i.test(t)) $('orderType').value='Takeaway';
+  if(q.customer && !$('customer').value) $('customer').value = q.customer;
+  if(q.note) $('note').value = $('note').value ? $('note').value+'; '+q.note : q.note;
+  cartQrIds.push(q.id);
+  showView('pos'); renderCart();
+}
+
+function printKitchenSlip(q){
+  if(!q) return;
+  $('receipt').innerHTML = `
+    <h3>KITCHEN</h3>
+    <div class="c" style="font-size:20px;font-weight:700">${esc(tableLabel(q.table))}</div>
+    <div class="c">${esc(q.id)} · ${new Date(q.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
+    <hr>
+    ${(q.items||[]).map(i=>`<div style="font-size:15px;margin:3px 0"><b>${i.qty} ×</b> ${esc(i.name)}</div>`).join('')}
+    ${q.note?`<hr><div><b>Note:</b> ${esc(q.note)}</div>`:''}
+    ${q.customer?`<div>Customer: ${esc(q.customer)}</div>`:''}
+    <hr>`;
+  setTimeout(()=>window.print(), 50);
+}
+
+let actx;
+document.addEventListener('click', ()=>{ if(!actx){ try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } });
+function beep(){
+  if(!actx) return;
+  try{
+    [0, 0.3].forEach(d=>{
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(0.3, actx.currentTime+d);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+d+0.25);
+      o.start(actx.currentTime+d); o.stop(actx.currentTime+d+0.25);
+    });
+  }catch(e){}
+}
+
+/* QR code generator */
+const deployId = () => { const m = (settings.sheetUrl||'').match(/\/macros\/s\/([^/]+)\/exec/); return m ? m[1] : null; };
+const qrBaseUrl = () => location.protocol.startsWith('http') ? location.href.replace(/[?#].*$/,'').replace(/[^/]*$/,'') : 'https://thilina0101.github.io/POS/';
+const orderUrl = t => qrBaseUrl()+'order.html?s='+encodeURIComponent(deployId())+(t?'&t='+encodeURIComponent(t):'');
+function renderQrHint(){
+  $('qrSetupHint').innerHTML = !deployId()
+    ? '⚠️ First connect your Google Sheet in ⚙️ Settings — the QR codes need it.'
+    : `Customers scanning these open <b>${esc(qrBaseUrl())}order.html</b>. Click <b>Update online menu</b> after changing prices or sold-out items.`;
+}
+function makeQr(text){
+  const d = document.createElement('div');
+  new QRCode(d, {text, width:300, height:300, correctLevel:QRCode.CorrectLevel.M});
+  const c = d.querySelector('canvas');
+  return c ? c.toDataURL('image/png') : d.querySelector('img').src;
+}
+let qrTiles = [];
+$('qrMake').onclick = ()=>{
+  if(typeof QRCode==='undefined') return toast('The QR code maker needs internet. Reload the page when online.');
+  if(!deployId()) return toast('Connect your Google Sheet in Settings first');
+  const n = Math.min(100, Math.max(0, parseInt($('qrTables').value)||0));
+  const list = []; for(let i=1;i<=n;i++) list.push(String(i));
+  if($('qrTakeaway').checked) list.push('Takeaway');
+  qrTiles = list.map(t=>({t, url:orderUrl(t), img:makeQr(orderUrl(t))}));
+  $('qrCodes').innerHTML = qrTiles.map(q=>`<div class="card qrtile"><b>${esc(thaiLabel(q.t))}</b><br><img src="${q.img}" alt="QR code for ${esc(q.t)}"><br><a href="${esc(q.url)}" target="_blank" rel="noopener">Test link</a></div>`).join('');
+  publishMenu();
+};
+$('qrPrint').onclick = ()=>{
+  if(!qrTiles.length) $('qrMake').onclick();
+  if(!qrTiles.length) return;
+  const w = window.open('', '_blank');
+  if(!w) return toast('Allow pop-ups to print the QR codes');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Table QR codes</title><style>
+    body{font-family:system-ui,"Noto Sans Thai",sans-serif;margin:0;color:#111}
+    .g{display:grid;grid-template-columns:1fr 1fr;gap:8mm;padding:8mm}
+    .c{border:2px solid #0f766e;border-radius:6mm;padding:6mm;text-align:center;break-inside:avoid}
+    .s{font-size:13pt;font-weight:700}.t{font-size:22pt;font-weight:800;margin:2mm 0}
+    img{width:55mm;height:55mm}.h{font-size:12pt}
+  </style></head><body><div class="g">${qrTiles.map(q=>`<div class="c"><div class="s">${esc(settings.shopName)}</div><div class="t">${esc(thaiLabel(q.t))}</div><img src="${q.img}"><div class="h">สแกนเพื่อสั่งอาหาร<br>Scan to order</div></div>`).join('')}</div>
+  <script>window.onload=()=>setTimeout(()=>print(),300)<\/script></body></html>`);
+  w.document.close();
+};
+$('qrPublish').onclick = ()=>publishMenu(true);
+$('qrRefresh').onclick = ()=>pollQr(true);
+setInterval(pollQr, 20000);
+
 /* ---------- init ---------- */
 $('from').value = $('to').value = ymd(new Date());
-renderCats(); applySettings(); syncPending();
+renderCats(); applySettings(); syncPending(); pollQr();
 </script>
 </body>
 </html>

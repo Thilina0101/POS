@@ -43,6 +43,26 @@ Until you do this, edited or voided orders stay **Pending**. New sales still syn
   When you add up the *Total* column on the Sales tab, filter Status to leave out VOID.
 - Set a **Manager PIN** in Settings so only you can edit or void orders, change settings or restore a backup.
 
+## Customer QR ordering
+Customers scan a QR code on their table, see your menu on their phone and send their order. It shows up in the POS under **📱 QR Orders**, with a beep.
+
+**Setup (Google Sheets must be connected first, with Code.gs version 3):**
+1. Update Code.gs as described above (Manage deployments → Edit → New version).
+2. In the POS, go to **⚙️ Settings → Test connection**. It should say "✅ Connected".
+3. Open **📱 QR Orders**, click **⬆ Update online menu**, then enter your number of tables and click **Generate QR codes**.
+4. Click **Test link** on one code to check the customer page works, then click **🖨 Print QR codes** and put them on your tables.
+
+**Daily use:**
+- New orders appear with a 🔔 beep (click anywhere on the POS once after opening it so sound is allowed).
+- **✔ Accept** prints a kitchen slip. **Reject** tells the customer it wasn't accepted.
+- When the customer pays, click **💵 Add to bill**. You can add several QR orders from the same table, then take payment as normal.
+- Mark items **Sold out** in the 🍽️ Menu tab. Customers can't order sold-out items.
+- Prices come from your POS menu, so customers can't change them.
+
+**POS device key:** each POS has a secret key (⚙️ Settings) that stops strangers from reading your sales through the public QR link.
+The first POS that connects sets it. On other devices, copy the same key into Settings (or use Backup → Restore).
+If you lose it, open Apps Script, choose **resetPosKey** in the function list, click ▶ **Run**, then click **Test connection** in the POS again.
+
 ## 3. Excel
 Open the **📊 Sales** tab, choose a date range, and click **Export Excel**. The .xlsx file has *Sales* and *Items* sheets.
 Google Sheets can also export: *File → Download → Microsoft Excel*.
