@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
 <title>Karena Curry Rice POS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -263,6 +264,10 @@
         <input id="sKey" autocomplete="off">
         <div class="hint">Protects your Google Sheet from strangers. Every POS device must use the same key (Backup → Restore copies it).</div>
       </div>
+      <div>
+        <label>Customer menu link (used in table QR codes)</label>
+        <input id="sMenuUrl" placeholder="https://thilina0101.github.io/karena/">
+      </div>
       <div class="row">
         <button class="btn" id="sSave">Save settings</button>
         <button class="btn secondary" id="sTest">Test connection</button>
@@ -302,7 +307,8 @@ const DEFAULT_MENU = [
 ].map(([name,price,category],i)=>({id:'m'+i,name,price,category}));
 
 const SHOP_NAME = 'คาเรนะ ข้าวแกงกะหรี่ญี่ปุ่นนะ Karena Curry Rice';
-let settings = Object.assign({shopName:SHOP_NAME,address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
+const DEFAULT_MENU_URL = 'https://thilina0101.github.io/karena/';
+let settings = Object.assign({menuUrl:DEFAULT_MENU_URL, shopName:SHOP_NAME,address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
 if(settings.currency==='Rs.'){ settings.currency='฿'; LS.set('settings',settings); }
 if(settings.shopName==='My Restaurant'){ settings.shopName=SHOP_NAME; LS.set('settings',settings); }
 if(!settings.posKey){
@@ -753,11 +759,13 @@ function loadSettingsForm(){
   $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
   $('sPin').value=settings.pin||'';
   $('sKey').value=settings.posKey||'';
+  $('sMenuUrl').value=settings.menuUrl||DEFAULT_MENU_URL;
 }
 function readSettingsForm(){
   settings = {shopName:$('sName').value.trim()||SHOP_NAME, address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
     servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim(),
-    pin:$('sPin').value.trim(), posKey:$('sKey').value.trim()||settings.posKey};
+    pin:$('sPin').value.trim(), posKey:$('sKey').value.trim()||settings.posKey,
+    menuUrl:/^https:\/\//i.test($('sMenuUrl').value.trim()) ? $('sMenuUrl').value.trim() : DEFAULT_MENU_URL};
 }
 $('sSave').onclick = async ()=>{
   if(!(await requirePin())) return;
@@ -902,12 +910,12 @@ function beep(){
 
 /* QR code generator */
 const deployId = () => { const m = (settings.sheetUrl||'').match(/\/macros\/s\/([^/]+)\/exec/); return m ? m[1] : null; };
-const qrBaseUrl = () => location.protocol.startsWith('http') ? location.href.replace(/[?#].*$/,'').replace(/[^/]*$/,'') : 'https://thilina0101.github.io/POS/';
-const orderUrl = t => qrBaseUrl()+'order.html?s='+encodeURIComponent(deployId())+(t?'&t='+encodeURIComponent(t):'');
+const menuBase = () => settings.menuUrl || DEFAULT_MENU_URL;
+const orderUrl = t => { const u = new URL(menuBase()); if(t) u.searchParams.set('t', t); u.searchParams.set('s', deployId()); return u.toString(); };
 function renderQrHint(){
   $('qrSetupHint').innerHTML = !deployId()
     ? '⚠️ First connect your Google Sheet in ⚙️ Settings — the QR codes need it.'
-    : `Customers scanning these open <b>${esc(qrBaseUrl())}order.html</b>. Click <b>Update online menu</b> after changing prices or sold-out items.`;
+    : `Customers scanning these open <b>${esc(menuBase())}</b>. Click <b>Update online menu</b> after changing prices or sold-out items.`;
 }
 function makeQr(text){
   const d = document.createElement('div');
