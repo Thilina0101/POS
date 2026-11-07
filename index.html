@@ -140,10 +140,10 @@
           <div class="change" id="changeOut" style="padding-bottom:10px"></div>
         </div>
         <div class="row" style="margin-top:12px">
-          <button class="btn secondary" id="clearBtn">Clear</button>
-          <button class="btn" id="payBtn" style="flex:2">Complete & Print</button>
+          <button class="btn secondary" id="clearBtn" style="flex:.6">Clear</button>
+          <button class="btn secondary" id="completeBtn" style="border-color:var(--brand);color:var(--brand)">✔ Complete</button>
+          <button class="btn" id="payBtn">🖨 Complete & Print</button>
         </div>
-        <label style="margin-top:8px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="autoPrint" style="width:auto" checked> Print receipt after sale</label>
       </div>
     </div>
   </section>
@@ -308,7 +308,7 @@ function renderCart(){
     ${t.tax?`<div><span>Tax (${settings.taxPct}%)</span><span>${money(t.tax)}</span></div>`:''}
     <div class="grand"><span>TOTAL</span><span>${money(t.total)}</span></div>`;
   updateChange();
-  $('payBtn').disabled = !cart.length;
+  $('payBtn').disabled = $('completeBtn').disabled = !cart.length;
 }
 function updateChange(){
   const t = calc(), cash = Number($('cashIn').value)||0;
@@ -332,7 +332,9 @@ function nextOrderId(){
   const n = orders.filter(o=>o.id.startsWith('ORD-'+today)).length + 1;
   return `ORD-${today}-${String(n).padStart(4,'0')}`;
 }
-$('payBtn').onclick = ()=>{
+$('payBtn').onclick = ()=>completeSale(true);
+$('completeBtn').onclick = ()=>completeSale(false);
+function completeSale(print){
   if(!cart.length) return;
   const t = calc();
   const cash = Number($('cashIn').value)||0;
@@ -345,11 +347,11 @@ $('payBtn').onclick = ()=>{
     ...t, payment: payMethod, paid: round2(paid), change: round2(paid-t.total), synced:false
   };
   orders.push(order); LS.set('orders', orders);
-  if($('autoPrint').checked) printReceipt(order);
+  if(print) printReceipt(order);
   resetOrder();
   toast('Sale saved: '+order.id);
   syncPending();
-};
+}
 
 /* ---------- receipt ---------- */
 function printReceipt(o){
