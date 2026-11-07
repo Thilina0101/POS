@@ -26,6 +26,23 @@ If the internet goes down, sales are kept on the computer and marked **Pending**
 
 > If you edit Code.gs later, use **Deploy → Manage deployments → ✏️ Edit → Version: New version** so the URL stays the same.
 
+## Updating Code.gs (needed for Edit / Void)
+If you set up Google Sheets before Edit/Void existed, do this once:
+1. Open your Sheet → **Extensions → Apps Script**.
+2. Select all the old code, delete it, and paste the new **Code.gs**. Click 💾 **Save**.
+3. Click **Deploy → Manage deployments**, then click ✏️ **Edit** on your deployment.
+4. Under **Version**, choose **New version**, then click **Deploy**.
+
+Your Web App URL stays the same. In the POS, **Settings → Test connection** should now show "✅ Connected".
+Until you do this, edited or voided orders stay **Pending**. New sales still sync normally.
+
+## Edit / Void orders
+- In **📊 Sales**, click **✏️ Edit** to open a bill back in the cart, change it, and click **Save changes**. It keeps the same bill number.
+- Click **Void** to cancel a bill. You must enter a reason. A voided bill stays in the list, marked VOID, but no longer counts in totals.
+- In Google Sheets, voided bills are crossed out with Status = **VOID** on the *Sales* tab and removed from the *Items* tab.
+  When you add up the *Total* column on the Sales tab, filter Status to leave out VOID.
+- Set a **Manager PIN** in Settings so only you can edit or void orders, change settings or restore a backup.
+
 ## 3. Excel
 Open the **📊 Sales** tab, choose a date range, and click **Export Excel**. The .xlsx file has *Sales* and *Items* sheets.
 Google Sheets can also export: *File → Download → Microsoft Excel*.

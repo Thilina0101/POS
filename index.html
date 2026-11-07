@@ -78,11 +78,21 @@
   .toast.show{opacity:1}
   .scroll{overflow-x:auto}
 
+  .badge.void{background:#fee2e2;color:var(--danger)}
+  .badge.edit{background:#e0e7ff;color:#3730a3}
+  tr.voided td{color:var(--muted)}
+  tr.voided td.num b{text-decoration:line-through}
+  .editbar{background:#fef3c7;border:1px solid #f5d08a;border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);align-items:center;justify-content:center;z-index:8;padding:16px}
+  .modal .card{width:100%;max-width:300px;display:grid;gap:10px}
+  .actions{white-space:nowrap;text-align:right}
+  .actions .btn{margin-left:4px}
+
   /* receipt (print only) */
   #receipt{display:none}
   @media print{
     body{background:#fff}
-    header,main,.toast{display:none!important}
+    header,main,.toast,.modal{display:none!important}
     #receipt{display:block;width:72mm;font-family:"Courier New",monospace;font-size:12px;color:#000}
     #receipt h3{text-align:center;margin:0 0 4px}
     #receipt .c{text-align:center}
@@ -118,6 +128,7 @@
       </div>
       <div class="card cart">
         <h2>Current Order</h2>
+        <div id="editBar" class="editbar" style="display:none"></div>
         <div class="row">
           <div><label>Order type</label>
             <select id="orderType"><option>Dine-in</option><option>Takeaway</option><option>Delivery</option></select></div>
@@ -196,6 +207,11 @@
       </div>
       <div><label>Receipt footer</label><input id="sFoot"></div>
       <div>
+        <label>Manager PIN (for Edit / Void / Settings)</label>
+        <input id="sPin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Leave empty for no PIN">
+        <div class="hint">When set, editing or voiding an order and changing settings will ask for this PIN.</div>
+      </div>
+      <div>
         <label>Google Sheet Web App URL</label>
         <input id="sUrl" placeholder="https://script.google.com/macros/s/.../exec">
         <div class="hint">See SETUP-GOOGLE-SHEETS.md for the 5-minute setup. Leave empty to work offline only (you can still export to Excel).</div>
@@ -217,6 +233,13 @@
 
 <div id="receipt"></div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="pinModal" style="display:none">
+  <div class="card">
+    <h3 style="margin:0">🔒 Manager PIN</h3>
+    <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="Enter PIN">
+    <div class="row"><button class="btn secondary" id="pinCancel">Cancel</button><button class="btn" id="pinOk">OK</button></div>
+  </div>
+</div>
 
 <script>
 /* ---------- storage ---------- */
@@ -238,6 +261,7 @@ if(settings.shopName==='My Restaurant'){ settings.shopName=SHOP_NAME; LS.set('se
 let menu = LS.get('menu', DEFAULT_MENU);
 let orders = LS.get('orders', []);
 let cart = [];
+let editingOrderId = null;
 let payMethod = 'Cash';
 let activeCat = 'All';
 
@@ -249,13 +273,28 @@ const ymd = d => { d = new Date(d); return d.getFullYear()+'-'+String(d.getMonth
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2500); }
 
 /* ---------- navigation ---------- */
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active', x===b));
-  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+b.dataset.view));
-  if(b.dataset.view==='sales') renderSales();
-  if(b.dataset.view==='menu') renderMenuTable();
-  if(b.dataset.view==='settings') loadSettingsForm();
-});
+function showView(name){
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active', x.dataset.view===name));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+name));
+  if(name==='sales') renderSales();
+  if(name==='menu') renderMenuTable();
+  if(name==='settings') loadSettingsForm();
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
+
+/* ---------- manager PIN ---------- */
+function requirePin(){
+  if(!settings.pin) return Promise.resolve(true);
+  return new Promise(resolve=>{
+    const m=$('pinModal'), inp=$('pinInput');
+    inp.value=''; m.style.display='flex'; setTimeout(()=>inp.focus(),0);
+    const done = ok => { m.style.display='none'; $('pinOk').onclick=$('pinCancel').onclick=inp.onkeydown=null; resolve(ok); };
+    const check = () => { if(inp.value===settings.pin) done(true); else { toast('Wrong PIN'); inp.value=''; inp.focus(); } };
+    $('pinOk').onclick = check;
+    $('pinCancel').onclick = () => done(false);
+    inp.onkeydown = e => { if(e.key==='Enter') check(); if(e.key==='Escape') done(false); };
+  });
+}
 
 /* ---------- POS ---------- */
 function renderCats(){
@@ -309,6 +348,8 @@ function renderCart(){
     <div class="grand"><span>TOTAL</span><span>${money(t.total)}</span></div>`;
   updateChange();
   $('payBtn').disabled = $('completeBtn').disabled = !cart.length;
+  $('completeBtn').textContent = editingOrderId ? '✔ Save changes' : '✔ Complete';
+  $('payBtn').textContent = editingOrderId ? '🖨 Save & Print' : '🖨 Complete & Print';
 }
 function updateChange(){
   const t = calc(), cash = Number($('cashIn').value)||0;
@@ -317,15 +358,20 @@ function updateChange(){
 }
 $('discount').oninput = renderCart;
 $('cashIn').oninput = updateChange;
-$('payBtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{
-  payMethod=b.dataset.pay;
-  $('payBtns').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+function setPay(method){
+  payMethod = method;
+  $('payBtns').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.pay===method));
   $('cashBox').style.display = payMethod==='Cash' ? 'flex' : 'none';
   updateChange();
-});
-$('clearBtn').onclick = ()=>{ if(!cart.length || confirm('Clear this order?')) resetOrder(); };
+}
+$('payBtns').querySelectorAll('button').forEach(b=>b.onclick=()=>setPay(b.dataset.pay));
+$('clearBtn').onclick = ()=>{
+  if(editingOrderId){ if(confirm('Cancel editing? The original order stays unchanged.')) resetOrder(); return; }
+  if(!cart.length || confirm('Clear this order?')) resetOrder();
+};
 function resetOrder(){
-  cart=[]; ['tableNo','customer','note','cashIn'].forEach(i=>$(i).value=''); $('discount').value=0; renderCart();
+  cart=[]; editingOrderId=null; $('editBar').style.display='none';
+  ['tableNo','customer','note','cashIn'].forEach(i=>$(i).value=''); $('discount').value=0; setPay('Cash'); renderCart();
 }
 function nextOrderId(){
   const today = ymd(new Date()).replace(/-/g,'');
@@ -340,16 +386,56 @@ function completeSale(print){
   const cash = Number($('cashIn').value)||0;
   if(payMethod==='Cash' && cash && cash<t.total){ toast('Cash received is less than total'); return; }
   const paid = payMethod==='Cash' ? (cash||t.total) : t.total;
-  const order = {
-    id: nextOrderId(), date: new Date().toISOString(),
+  const data = {
     type: $('orderType').value, table: $('tableNo').value.trim(), customer: $('customer').value.trim(), note: $('note').value.trim(),
     items: cart.map(l=>({name:l.name,category:l.category,price:l.price,qty:l.qty,amount:round2(l.price*l.qty)})),
     ...t, payment: payMethod, paid: round2(paid), change: round2(paid-t.total), synced:false
   };
-  orders.push(order); LS.set('orders', orders);
+  let order;
+  const wasEdit = !!editingOrderId;
+  if(wasEdit){
+    order = orders.find(o=>o.id===editingOrderId);
+    Object.assign(order, data, {editedAt:new Date().toISOString(), editCount:(order.editCount||0)+1});
+  } else {
+    order = {id: nextOrderId(), date: new Date().toISOString(), ...data};
+    orders.push(order);
+  }
+  LS.set('orders', orders);
   if(print) printReceipt(order);
   resetOrder();
-  toast('Sale saved: '+order.id);
+  toast((wasEdit ? 'Order updated: ' : 'Sale saved: ')+order.id);
+  syncPending();
+  if(wasEdit) showView('sales');
+}
+
+/* ---------- edit / void ---------- */
+async function startEdit(id){
+  const o = orders.find(x=>x.id===id);
+  if(!o || o.status==='void') return;
+  if(cart.length && editingOrderId!==id && !confirm('The order currently in the cart will be cleared. Continue?')) return;
+  if(!(await requirePin())) return;
+  resetOrder();
+  editingOrderId = o.id;
+  cart = o.items.map((i,n)=>{ const m = menu.find(m=>m.name===i.name); return {id:m?m.id:'old'+n, name:i.name, price:Number(i.price), category:i.category||'', qty:i.qty}; });
+  $('orderType').value=o.type; $('tableNo').value=o.table||''; $('customer').value=o.customer||''; $('note').value=o.note||''; $('discount').value=o.discPct||0;
+  setPay(o.payment);
+  if(o.payment==='Cash' && o.paid>o.total) $('cashIn').value=o.paid;
+  $('editBar').innerHTML = `<span>✏️ Editing <b>${esc(o.id)}</b></span><button class="btn secondary small" id="cancelEdit">Cancel edit</button>`;
+  $('editBar').style.display='flex';
+  $('cancelEdit').onclick = ()=>{ resetOrder(); showView('sales'); };
+  showView('pos'); renderCart();
+}
+async function voidOrder(id){
+  const o = orders.find(x=>x.id===id);
+  if(!o || o.status==='void') return;
+  if(!(await requirePin())) return;
+  const reason = prompt(`Void ${o.id} (${money(o.total)})?\n\nEnter the reason:`);
+  if(reason===null) return;
+  if(!reason.trim()) return toast('A reason is required to void an order');
+  o.status='void'; o.voidReason=reason.trim(); o.voidedAt=new Date().toISOString(); o.synced=false;
+  if(editingOrderId===id) resetOrder();
+  LS.set('orders', orders);
+  renderSales(); toast('Order voided: '+o.id);
   syncPending();
 }
 
@@ -393,8 +479,8 @@ function refreshSyncLabel(){
   else if(p) setSync('pending', p+' sale(s) waiting to sync');
   else setSync('ok','Google Sheet synced');
 }
-async function postToSheet(payload){
-  const r = await fetch(settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload)});
+async function postToSheet(payload, url){
+  const r = await fetch(url || settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload)});
   const j = await r.json();
   if(!j.ok) throw new Error(j.error||'Sheet error');
   return j;
@@ -402,18 +488,26 @@ async function postToSheet(payload){
 async function syncPending(showMsg){
   if(!settings.sheetUrl){ refreshSyncLabel(); if(showMsg) toast('Add your Google Sheet URL in Settings first'); return; }
   if(syncing) return; syncing = true;
-  let done = 0, failed = false;
+  let done = 0, failed = false, oldScript = false;
   for(const o of orders.filter(o=>!o.synced)){
     try{
       const {synced, ...data} = o;
-      await postToSheet({action:'order', order:{...data, localDate: new Date(o.date).toLocaleString()}});
+      const j = await postToSheet({action:'order', order:{...data,
+        localDate: new Date(o.date).toLocaleString(),
+        editedLocal: o.editedAt ? new Date(o.editedAt).toLocaleString() : '',
+        voidedLocal: o.voidedAt ? new Date(o.voidedAt).toLocaleString() : ''}});
+      // Old Code.gs (version 1) can't update existing rows: keep these pending until it's updated
+      if((o.status==='void' || o.editedAt) && !(j.version>=2)){ oldScript = true; continue; }
       o.synced = true; done++; LS.set('orders', orders);
     }catch(e){ failed = true; console.warn('Sync failed', e); break; }
   }
   syncing = false;
   refreshSyncLabel();
+  if(oldScript) setSync('err', 'Update Code.gs in Google Apps Script to sync edits/voids');
   if(failed) setSync('err', 'Sync failed — will retry ('+orders.filter(o=>!o.synced).length+' waiting)');
-  if(showMsg) toast(failed ? 'Could not reach Google Sheet. Check internet / URL.' : (done ? `Synced ${done} sale(s)` : 'Everything already synced'));
+  if(showMsg) toast(failed ? 'Could not reach Google Sheet. Check internet / URL.'
+    : oldScript ? 'Edited/voided orders need the new Code.gs — see setup guide'
+    : (done ? `Synced ${done} sale(s)` : 'Everything already synced'));
 }
 setInterval(syncPending, 60000);
 window.addEventListener('online', ()=>syncPending());
@@ -424,13 +518,16 @@ function filtered(){
   return orders.filter(o=>{ const d = ymd(o.date); return (!f||d>=f) && (!t||d<=t); });
 }
 function renderSales(){
-  const list = filtered();
+  const all = filtered();
+  const list = all.filter(o=>o.status!=='void');
+  const voids = all.filter(o=>o.status==='void');
   const total = list.reduce((s,o)=>s+o.total,0);
   const byPay = {}; list.forEach(o=>byPay[o.payment]=(byPay[o.payment]||0)+o.total);
   const itemsSold = list.reduce((s,o)=>s+o.items.reduce((a,i)=>a+i.qty,0),0);
   $('stats').innerHTML = [
     ['Total sales', money(total)], ['Orders', list.length], ['Avg. order', money(list.length?total/list.length:0)], ['Items sold', itemsSold],
-    ...Object.entries(byPay).map(([k,v])=>[k, money(v)])
+    ...Object.entries(byPay).map(([k,v])=>[k, money(v)]),
+    ...(voids.length ? [['Voided', voids.length+' · '+money(voids.reduce((s,o)=>s+o.total,0))]] : [])
   ].map(([k,v])=>`<div class="card stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join('');
 
   const agg = {};
@@ -440,14 +537,21 @@ function renderSales(){
     (top.map(([n,v])=>`<tr><td>${esc(n)}</td><td class="num">${v.qty}</td><td class="num">${money(v.amt)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No sales in this period</td></tr>');
 
   $('salesTable').innerHTML = '<tr><th>Bill</th><th>Time</th><th>Type</th><th>Items</th><th>Payment</th><th class="num">Total</th><th>Sheet</th><th></th></tr>' +
-    (list.slice().reverse().map(o=>`<tr>
-      <td>${esc(o.id)}</td><td>${new Date(o.date).toLocaleString()}</td>
+    (all.slice().reverse().map(o=>{
+      const isVoid = o.status==='void';
+      const status = isVoid ? `<span class="badge void" title="${esc(o.voidReason)}">VOID</span><div class="hint">${esc(o.voidReason)}</div>`
+        : o.editedAt ? `<span class="badge edit" title="Edited ${esc(new Date(o.editedAt).toLocaleString())}">Edited</span>` : '';
+      return `<tr class="${isVoid?'voided':''}">
+      <td>${esc(o.id)}${status?'<br>'+status:''}</td><td>${new Date(o.date).toLocaleString()}</td>
       <td>${esc(o.type)}${o.table?' · '+esc(o.table):''}</td>
       <td>${o.items.map(i=>esc(i.qty+'× '+i.name)).join(', ')}</td>
       <td>${esc(o.payment)}</td><td class="num"><b>${money(o.total)}</b></td>
       <td>${o.synced?'<span class="badge ok">Saved</span>':'<span class="badge pending">Pending</span>'}</td>
-      <td><button class="btn secondary small" data-r="${esc(o.id)}">Reprint</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No orders</td></tr>');
+      <td class="actions">${isVoid ? '' : `<button class="btn secondary small" data-r="${esc(o.id)}">Reprint</button><button class="btn secondary small" data-ed="${esc(o.id)}">✏️ Edit</button><button class="btn danger small" data-v="${esc(o.id)}">Void</button>`}</td></tr>`;
+    }).join('') || '<tr><td colspan="8" class="empty">No orders</td></tr>');
   $('salesTable').querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>printReceipt(orders.find(o=>o.id===b.dataset.r)));
+  $('salesTable').querySelectorAll('[data-ed]').forEach(b=>b.onclick=()=>startEdit(b.dataset.ed));
+  $('salesTable').querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>voidOrder(b.dataset.v));
 }
 $('from').onchange = $('to').onchange = renderSales;
 $('todayBtn').onclick = ()=>{ $('from').value=$('to').value=ymd(new Date()); renderSales(); };
@@ -456,8 +560,9 @@ $('syncBtn').onclick = async ()=>{ await syncPending(true); renderSales(); };
 function exportRows(){
   const list = filtered();
   const sales = list.map(o=>({'Bill No':o.id,'Date':ymd(o.date),'Time':new Date(o.date).toLocaleTimeString(),'Type':o.type,'Table/Ref':o.table,'Customer':o.customer,
-    'Items':o.items.map(i=>i.qty+'x '+i.name).join(', '),'Subtotal':o.subtotal,'Discount':o.discount,'Service':o.service,'Tax':o.tax,'Total':o.total,'Payment':o.payment,'Paid':o.paid,'Change':o.change,'Note':o.note}));
-  const items = []; list.forEach(o=>o.items.forEach(i=>items.push({'Bill No':o.id,'Date':ymd(o.date),'Item':i.name,'Category':i.category,'Price':i.price,'Qty':i.qty,'Amount':i.amount})));
+    'Items':o.items.map(i=>i.qty+'x '+i.name).join(', '),'Subtotal':o.subtotal,'Discount':o.discount,'Service':o.service,'Tax':o.tax,'Total':o.total,'Payment':o.payment,'Paid':o.paid,'Change':o.change,'Note':o.note,
+    'Status':o.status==='void'?'VOID':(o.editedAt?'EDITED':'OK'),'Void Reason':o.voidReason||'','Edited At':o.editedAt?new Date(o.editedAt).toLocaleString():''}));
+  const items = []; list.filter(o=>o.status!=='void').forEach(o=>o.items.forEach(i=>items.push({'Bill No':o.id,'Date':ymd(o.date),'Item':i.name,'Category':i.category,'Price':i.price,'Qty':i.qty,'Amount':i.amount})));
   return {sales, items};
 }
 function fname(ext){ return `sales_${$('from').value||'all'}_to_${$('to').value||'all'}.${ext}`; }
@@ -512,22 +617,30 @@ $('mCancel').onclick = resetMenuForm;
 function loadSettingsForm(){
   $('sName').value=settings.shopName; $('sAddr').value=settings.address; $('sCur').value=settings.currency;
   $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
+  $('sPin').value=settings.pin||'';
 }
 function readSettingsForm(){
   settings = {shopName:$('sName').value.trim()||SHOP_NAME, address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
-    servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim()};
+    servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim(),
+    pin:$('sPin').value.trim()};
 }
-$('sSave').onclick = ()=>{ readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending(); };
+$('sSave').onclick = async ()=>{
+  if(!(await requirePin())) return;
+  readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending();
+};
 $('sTest').onclick = async ()=>{
-  readSettingsForm();
-  if(!settings.sheetUrl) return toast('Paste your Web App URL first');
-  try{ await postToSheet({action:'ping'}); toast('✅ Connected to Google Sheet!'); }
+  const url = $('sUrl').value.trim();
+  if(!url) return toast('Paste your Web App URL first');
+  try{
+    const j = await postToSheet({action:'ping'}, url);
+    toast(j.version>=2 ? '✅ Connected to Google Sheet!' : '⚠️ Connected, but please update Code.gs to the new version');
+  }
   catch(e){ toast('❌ Could not connect: '+e.message); }
 };
 function applySettings(){ $('hdrName').textContent=settings.shopName; document.title=settings.shopName+' POS'; renderGrid(); renderCart(); refreshSyncLabel(); }
 
 $('backupBtn').onclick = ()=>download(new Blob([JSON.stringify({settings,menu,orders},null,2)],{type:'application/json'}), 'pos-backup-'+ymd(new Date())+'.json');
-$('restoreBtn').onclick = ()=>$('restoreFile').click();
+$('restoreBtn').onclick = async ()=>{ if(await requirePin()) $('restoreFile').click(); };
 $('restoreFile').onchange = e=>{
   const f=e.target.files[0]; if(!f) return;
   f.text().then(t=>{
