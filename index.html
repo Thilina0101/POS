@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Restaurant POS</title>
+<title>Karena Curry Rice POS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -97,7 +97,7 @@
 <body>
 
 <header>
-  <h1 id="hdrName">Restaurant POS</h1>
+  <h1 id="hdrName">คาเรนะ ข้าวแกงกะหรี่ญี่ปุ่นนะ Karena Curry Rice</h1>
   <nav>
     <button data-view="pos" class="active">🧾 New Order</button>
     <button data-view="sales">📊 Sales</button>
@@ -231,8 +231,10 @@ const DEFAULT_MENU = [
   ['Tea',30,'Drinks'],['Coffee',45,'Drinks'],['Fresh Juice',50,'Drinks'],['Soft Drink',25,'Drinks'],['Water Bottle',15,'Drinks']
 ].map(([name,price,category],i)=>({id:'m'+i,name,price,category}));
 
-let settings = Object.assign({shopName:'My Restaurant',address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
+const SHOP_NAME = 'คาเรนะ ข้าวแกงกะหรี่ญี่ปุ่นนะ Karena Curry Rice';
+let settings = Object.assign({shopName:SHOP_NAME,address:'',currency:'฿',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
 if(settings.currency==='Rs.'){ settings.currency='฿'; LS.set('settings',settings); }
+if(settings.shopName==='My Restaurant'){ settings.shopName=SHOP_NAME; LS.set('settings',settings); }
 let menu = LS.get('menu', DEFAULT_MENU);
 let orders = LS.get('orders', []);
 let cart = [];
@@ -510,7 +512,7 @@ function loadSettingsForm(){
   $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
 }
 function readSettingsForm(){
-  settings = {shopName:$('sName').value.trim()||'My Restaurant', address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
+  settings = {shopName:$('sName').value.trim()||SHOP_NAME, address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'฿',
     servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim()};
 }
 $('sSave').onclick = ()=>{ readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending(); };
