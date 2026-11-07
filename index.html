@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restaurant POS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f5f7; --panel:#fff; --ink:#1d2330; --muted:#6b7280; --line:#e3e6eb;
+    --brand:#0f766e; --brand-ink:#fff; --brand-soft:#e6f4f2; --danger:#c0392b; --warn:#b7791f; --ok:#15803d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+  header{display:flex;align-items:center;gap:12px;background:var(--ink);color:#fff;padding:10px 16px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0 12px 0 0}
+  nav{display:flex;gap:6px;flex-wrap:wrap}
+  nav button{background:transparent;color:#cbd2dc;border:1px solid #3a4252;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:14px}
+  nav button.active{background:var(--brand);border-color:var(--brand);color:#fff}
+  #syncStatus{margin-left:auto;font-size:13px;color:#cbd2dc}
+  #syncStatus .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:#888}
+  main{padding:16px}
+  .view{display:none}.view.active{display:block}
+  button{font:inherit}
+  .btn{background:var(--brand);color:var(--brand-ink);border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .btn.danger{background:var(--danger)}
+  .btn.small{padding:6px 10px;font-size:13px}
+  input,select,textarea{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);width:100%}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+
+  /* POS layout */
+  .pos{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+  .cats{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .cats button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 14px;cursor:pointer}
+  .cats button.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+  .item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 12px;cursor:pointer;text-align:left;min-height:84px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .05s}
+  .item:active{transform:scale(.97)}
+  .item:hover{border-color:var(--brand)}
+  .item .n{font-weight:600}
+  .item .p{color:var(--brand);font-weight:700;margin-top:6px}
+  .cart h2{margin:0 0 10px;font-size:17px}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  .lines{margin:12px 0;max-height:38vh;overflow:auto;border-top:1px solid var(--line)}
+  .line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+  .line .nm{font-weight:600}
+  .line .sub{font-size:12px;color:var(--muted)}
+  .qty{display:flex;align-items:center;gap:4px}
+  .qty button{width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700}
+  .empty{color:var(--muted);text-align:center;padding:28px 0}
+  .totals div{display:flex;justify-content:space-between;padding:3px 0}
+  .totals .grand{font-size:20px;font-weight:800;border-top:2px solid var(--ink);margin-top:6px;padding-top:8px}
+  .pay{display:flex;gap:6px;margin:10px 0}
+  .pay button{flex:1;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-weight:600}
+  .pay button.active{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+  .change{font-weight:700;color:var(--ok)}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;background:#fff}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+  th{background:#f8f9fb;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+  td.num,th.num{text-align:right}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+  .stat .k{font-size:12px;color:var(--muted);text-transform:uppercase}
+  .stat .v{font-size:22px;font-weight:800;margin-top:4px}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
+  .toolbar>div{min-width:150px}
+  .badge{font-size:11px;padding:2px 8px;border-radius:999px;font-weight:700}
+  .badge.ok{background:#dcfce7;color:var(--ok)}
+  .badge.pending{background:#fef3c7;color:var(--warn)}
+  .settings{max-width:640px;display:grid;gap:12px}
+  .hint{font-size:13px;color:var(--muted)}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 18px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+  .toast.show{opacity:1}
+  .scroll{overflow-x:auto}
+
+  /* receipt (print only) */
+  #receipt{display:none}
+  @media print{
+    body{background:#fff}
+    header,main,.toast{display:none!important}
+    #receipt{display:block;width:72mm;font-family:"Courier New",monospace;font-size:12px;color:#000}
+    #receipt h3{text-align:center;margin:0 0 4px}
+    #receipt .c{text-align:center}
+    #receipt table{background:none}
+    #receipt td{border:0;padding:1px 0;font-size:12px}
+    #receipt hr{border:0;border-top:1px dashed #000}
+    @page{margin:4mm}
+  }
+  @media (max-width:900px){.pos{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="hdrName">Restaurant POS</h1>
+  <nav>
+    <button data-view="pos" class="active">🧾 New Order</button>
+    <button data-view="sales">📊 Sales</button>
+    <button data-view="menu">🍽️ Menu</button>
+    <button data-view="settings">⚙️ Settings</button>
+  </nav>
+  <div id="syncStatus"><span class="dot"></span><span id="syncText">Not connected</span></div>
+</header>
+
+<main>
+  <!-- POS -->
+  <section id="view-pos" class="view active">
+    <div class="pos">
+      <div>
+        <input id="search" placeholder="Search menu..." style="margin-bottom:10px">
+        <div class="cats" id="cats"></div>
+        <div class="grid" id="grid"></div>
+      </div>
+      <div class="card cart">
+        <h2>Current Order</h2>
+        <div class="row">
+          <div><label>Order type</label>
+            <select id="orderType"><option>Dine-in</option><option>Takeaway</option><option>Delivery</option></select></div>
+          <div><label>Table / Ref</label><input id="tableNo" placeholder="e.g. 5"></div>
+        </div>
+        <div style="margin-top:8px"><label>Customer (optional)</label><input id="customer" placeholder="Name / phone"></div>
+        <div class="lines" id="lines"></div>
+        <div class="row" style="margin-bottom:8px">
+          <div><label>Discount %</label><input id="discount" type="number" min="0" max="100" value="0"></div>
+          <div><label>Note</label><input id="note" placeholder="No chili..."></div>
+        </div>
+        <div class="totals" id="totals"></div>
+        <div class="pay" id="payBtns">
+          <button data-pay="Cash" class="active">💵 Cash</button>
+          <button data-pay="Card">💳 Card</button>
+          <button data-pay="Other">📱 Other</button>
+        </div>
+        <div id="cashBox" class="row" style="align-items:end">
+          <div><label>Cash received</label><input id="cashIn" type="number" min="0" placeholder="0"></div>
+          <div class="change" id="changeOut" style="padding-bottom:10px"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn secondary" id="clearBtn">Clear</button>
+          <button class="btn" id="payBtn" style="flex:2">Complete & Print</button>
+        </div>
+        <label style="margin-top:8px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="autoPrint" style="width:auto" checked> Print receipt after sale</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- SALES -->
+  <section id="view-sales" class="view">
+    <div class="toolbar">
+      <div><label>From</label><input type="date" id="from"></div>
+      <div><label>To</label><input type="date" id="to"></div>
+      <button class="btn secondary" id="todayBtn">Today</button>
+      <button class="btn" id="xlsxBtn">⬇ Export Excel</button>
+      <button class="btn secondary" id="csvBtn">⬇ Export CSV</button>
+      <button class="btn secondary" id="syncBtn">⟳ Sync to Google Sheet</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin-top:0">Top items</h3>
+      <div class="scroll"><table id="topTable"></table></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Orders</h3>
+      <div class="scroll"><table id="salesTable"></table></div>
+    </div>
+  </section>
+
+  <!-- MENU -->
+  <section id="view-menu" class="view">
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin-top:0" id="menuFormTitle">Add menu item</h3>
+      <div class="toolbar" style="margin:0">
+        <div style="flex:2"><label>Name</label><input id="mName"></div>
+        <div><label>Price</label><input id="mPrice" type="number" min="0" step="0.01"></div>
+        <div><label>Category</label><input id="mCat" list="catList"><datalist id="catList"></datalist></div>
+        <button class="btn" id="mSave">Save</button>
+        <button class="btn secondary" id="mCancel" style="display:none">Cancel</button>
+      </div>
+    </div>
+    <div class="card scroll"><table id="menuTable"></table></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view">
+    <div class="card settings">
+      <div><label>Shop name</label><input id="sName"></div>
+      <div><label>Address / phone (shown on receipt)</label><input id="sAddr"></div>
+      <div class="row">
+        <div><label>Currency symbol</label><input id="sCur"></div>
+        <div><label>Service charge %</label><input id="sSvc" type="number" min="0"></div>
+        <div><label>Tax %</label><input id="sTax" type="number" min="0"></div>
+      </div>
+      <div><label>Receipt footer</label><input id="sFoot"></div>
+      <div>
+        <label>Google Sheet Web App URL</label>
+        <input id="sUrl" placeholder="https://script.google.com/macros/s/.../exec">
+        <div class="hint">See SETUP-GOOGLE-SHEETS.md for the 5-minute setup. Leave empty to work offline only (you can still export to Excel).</div>
+      </div>
+      <div class="row">
+        <button class="btn" id="sSave">Save settings</button>
+        <button class="btn secondary" id="sTest">Test connection</button>
+      </div>
+      <hr style="border:0;border-top:1px solid var(--line);width:100%">
+      <div class="row">
+        <button class="btn secondary" id="backupBtn">⬇ Backup all data</button>
+        <button class="btn secondary" id="restoreBtn">⬆ Restore backup</button>
+        <input type="file" id="restoreFile" accept=".json" style="display:none">
+      </div>
+      <div class="hint">Data is stored in this browser. Make a backup regularly, and don't clear browser data for this page.</div>
+    </div>
+  </section>
+</main>
+
+<div id="receipt"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- storage ---------- */
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem('pos_'+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ localStorage.setItem('pos_'+k, JSON.stringify(v)); }
+};
+const DEFAULT_MENU = [
+  ['Chicken Fried Rice',950,'Rice'],['Vegetable Fried Rice',750,'Rice'],['Rice & Curry (Chicken)',650,'Rice'],
+  ['Chicken Kottu',900,'Kottu'],['Cheese Kottu',1100,'Kottu'],['Egg Kottu',700,'Kottu'],
+  ['Chicken Burger',850,'Snacks'],['French Fries',450,'Snacks'],['Chicken Submarine',800,'Snacks'],
+  ['Tea',120,'Drinks'],['Coffee',200,'Drinks'],['Fresh Juice',350,'Drinks'],['Soft Drink',250,'Drinks'],['Water Bottle',100,'Drinks']
+].map(([name,price,category],i)=>({id:'m'+i,name,price,category}));
+
+let settings = Object.assign({shopName:'My Restaurant',address:'',currency:'Rs.',servicePct:0,taxPct:0,footer:'Thank you! Come again.',sheetUrl:''}, LS.get('settings',{}));
+let menu = LS.get('menu', DEFAULT_MENU);
+let orders = LS.get('orders', []);
+let cart = [];
+let payMethod = 'Cash';
+let activeCat = 'All';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => settings.currency + ' ' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const round2 = n => Math.round(n*100)/100;
+const ymd = d => { d = new Date(d); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2500); }
+
+/* ---------- navigation ---------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active', x===b));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+b.dataset.view));
+  if(b.dataset.view==='sales') renderSales();
+  if(b.dataset.view==='menu') renderMenuTable();
+  if(b.dataset.view==='settings') loadSettingsForm();
+});
+
+/* ---------- POS ---------- */
+function renderCats(){
+  const cats = ['All', ...new Set(menu.map(m=>m.category||'Other'))];
+  if(!cats.includes(activeCat)) activeCat='All';
+  $('cats').innerHTML = cats.map(c=>`<button class="${c===activeCat?'active':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  $('cats').querySelectorAll('button').forEach(b=>b.onclick=()=>{activeCat=b.dataset.c; renderCats(); renderGrid();});
+}
+function renderGrid(){
+  const q = $('search').value.trim().toLowerCase();
+  const list = menu.filter(m => (activeCat==='All' || (m.category||'Other')===activeCat) && (!q || m.name.toLowerCase().includes(q)));
+  $('grid').innerHTML = list.map(m=>`<button class="item" data-id="${esc(m.id)}"><span class="n">${esc(m.name)}</span><span class="p">${money(m.price)}</span></button>`).join('') || '<div class="empty">No items. Add some in the Menu tab.</div>';
+  $('grid').querySelectorAll('.item').forEach(b=>b.onclick=()=>addToCart(b.dataset.id));
+}
+$('search').oninput = renderGrid;
+
+function addToCart(id){
+  const m = menu.find(x=>x.id===id); if(!m) return;
+  const line = cart.find(l=>l.id===id);
+  if(line) line.qty++; else cart.push({id:m.id,name:m.name,price:Number(m.price),category:m.category||'',qty:1});
+  renderCart();
+}
+function calc(){
+  const subtotal = round2(cart.reduce((s,l)=>s+l.price*l.qty,0));
+  const discPct = Math.min(100, Math.max(0, Number($('discount').value)||0));
+  const discount = round2(subtotal*discPct/100);
+  const after = subtotal - discount;
+  const service = round2(after*(Number(settings.servicePct)||0)/100);
+  const tax = round2((after+service)*(Number(settings.taxPct)||0)/100);
+  const total = round2(after+service+tax);
+  return {subtotal,discPct,discount,service,tax,total};
+}
+function renderCart(){
+  $('lines').innerHTML = cart.length ? cart.map((l,i)=>`
+    <div class="line">
+      <div><div class="nm">${esc(l.name)}</div><div class="sub">${money(l.price)} each</div></div>
+      <div class="qty"><button data-i="${i}" data-d="-1">−</button><b style="min-width:22px;text-align:center">${l.qty}</b><button data-i="${i}" data-d="1">+</button></div>
+      <div style="min-width:80px;text-align:right;font-weight:600">${money(l.price*l.qty)}</div>
+    </div>`).join('') : '<div class="empty">Tap menu items to add them</div>';
+  $('lines').querySelectorAll('.qty button').forEach(b=>b.onclick=()=>{
+    const l = cart[b.dataset.i]; l.qty += Number(b.dataset.d);
+    if(l.qty<=0) cart.splice(b.dataset.i,1);
+    renderCart();
+  });
+  const t = calc();
+  $('totals').innerHTML = `
+    <div><span>Subtotal</span><span>${money(t.subtotal)}</span></div>
+    ${t.discount?`<div><span>Discount (${t.discPct}%)</span><span>− ${money(t.discount)}</span></div>`:''}
+    ${t.service?`<div><span>Service (${settings.servicePct}%)</span><span>${money(t.service)}</span></div>`:''}
+    ${t.tax?`<div><span>Tax (${settings.taxPct}%)</span><span>${money(t.tax)}</span></div>`:''}
+    <div class="grand"><span>TOTAL</span><span>${money(t.total)}</span></div>`;
+  updateChange();
+  $('payBtn').disabled = !cart.length;
+}
+function updateChange(){
+  const t = calc(), cash = Number($('cashIn').value)||0;
+  $('changeOut').textContent = payMethod==='Cash' && cash ? (cash>=t.total ? 'Change: '+money(cash-t.total) : 'Short: '+money(t.total-cash)) : '';
+  $('changeOut').style.color = cash && cash<t.total ? 'var(--danger)' : 'var(--ok)';
+}
+$('discount').oninput = renderCart;
+$('cashIn').oninput = updateChange;
+$('payBtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+  payMethod=b.dataset.pay;
+  $('payBtns').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+  $('cashBox').style.display = payMethod==='Cash' ? 'flex' : 'none';
+  updateChange();
+});
+$('clearBtn').onclick = ()=>{ if(!cart.length || confirm('Clear this order?')) resetOrder(); };
+function resetOrder(){
+  cart=[]; ['tableNo','customer','note','cashIn'].forEach(i=>$(i).value=''); $('discount').value=0; renderCart();
+}
+function nextOrderId(){
+  const today = ymd(new Date()).replace(/-/g,'');
+  const n = orders.filter(o=>o.id.startsWith('ORD-'+today)).length + 1;
+  return `ORD-${today}-${String(n).padStart(4,'0')}`;
+}
+$('payBtn').onclick = ()=>{
+  if(!cart.length) return;
+  const t = calc();
+  const cash = Number($('cashIn').value)||0;
+  if(payMethod==='Cash' && cash && cash<t.total){ toast('Cash received is less than total'); return; }
+  const paid = payMethod==='Cash' ? (cash||t.total) : t.total;
+  const order = {
+    id: nextOrderId(), date: new Date().toISOString(),
+    type: $('orderType').value, table: $('tableNo').value.trim(), customer: $('customer').value.trim(), note: $('note').value.trim(),
+    items: cart.map(l=>({name:l.name,category:l.category,price:l.price,qty:l.qty,amount:round2(l.price*l.qty)})),
+    ...t, payment: payMethod, paid: round2(paid), change: round2(paid-t.total), synced:false
+  };
+  orders.push(order); LS.set('orders', orders);
+  if($('autoPrint').checked) printReceipt(order);
+  resetOrder();
+  toast('Sale saved: '+order.id);
+  syncPending();
+};
+
+/* ---------- receipt ---------- */
+function printReceipt(o){
+  const d = new Date(o.date);
+  $('receipt').innerHTML = `
+    <h3>${esc(settings.shopName)}</h3>
+    ${settings.address?`<div class="c">${esc(settings.address)}</div>`:''}
+    <hr>
+    <div>Bill: ${esc(o.id)}</div>
+    <div>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
+    <div>${esc(o.type)}${o.table?' · '+esc(o.table):''}${o.customer?' · '+esc(o.customer):''}</div>
+    <hr>
+    <table style="width:100%">${o.items.map(i=>`<tr><td>${esc(i.name)}<br>&nbsp;${i.qty} x ${Number(i.price).toFixed(2)}</td><td style="text-align:right;vertical-align:bottom">${i.amount.toFixed(2)}</td></tr>`).join('')}</table>
+    <hr>
+    <table style="width:100%">
+      <tr><td>Subtotal</td><td style="text-align:right">${o.subtotal.toFixed(2)}</td></tr>
+      ${o.discount?`<tr><td>Discount ${o.discPct}%</td><td style="text-align:right">-${o.discount.toFixed(2)}</td></tr>`:''}
+      ${o.service?`<tr><td>Service charge</td><td style="text-align:right">${o.service.toFixed(2)}</td></tr>`:''}
+      ${o.tax?`<tr><td>Tax</td><td style="text-align:right">${o.tax.toFixed(2)}</td></tr>`:''}
+      <tr><td><b>TOTAL ${esc(settings.currency)}</b></td><td style="text-align:right"><b>${o.total.toFixed(2)}</b></td></tr>
+      <tr><td>${esc(o.payment)}</td><td style="text-align:right">${o.paid.toFixed(2)}</td></tr>
+      ${o.change>0?`<tr><td>Change</td><td style="text-align:right">${o.change.toFixed(2)}</td></tr>`:''}
+    </table>
+    ${o.note?`<hr><div>Note: ${esc(o.note)}</div>`:''}
+    <hr><div class="c">${esc(settings.footer)}</div>`;
+  setTimeout(()=>window.print(), 50);
+}
+
+/* ---------- Google Sheets sync ---------- */
+let syncing = false;
+function setSync(state, text){
+  const colors = {ok:'#22c55e', pending:'#f59e0b', off:'#888', err:'#ef4444'};
+  document.querySelector('#syncStatus .dot').style.background = colors[state];
+  $('syncText').textContent = text;
+}
+function refreshSyncLabel(){
+  const p = orders.filter(o=>!o.synced).length;
+  if(!settings.sheetUrl) setSync('off','Offline mode (no Google Sheet)');
+  else if(p) setSync('pending', p+' sale(s) waiting to sync');
+  else setSync('ok','Google Sheet synced');
+}
+async function postToSheet(payload){
+  const r = await fetch(settings.sheetUrl, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload)});
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error||'Sheet error');
+  return j;
+}
+async function syncPending(showMsg){
+  if(!settings.sheetUrl){ refreshSyncLabel(); if(showMsg) toast('Add your Google Sheet URL in Settings first'); return; }
+  if(syncing) return; syncing = true;
+  let done = 0, failed = false;
+  for(const o of orders.filter(o=>!o.synced)){
+    try{
+      const {synced, ...data} = o;
+      await postToSheet({action:'order', order:{...data, localDate: new Date(o.date).toLocaleString()}});
+      o.synced = true; done++; LS.set('orders', orders);
+    }catch(e){ failed = true; console.warn('Sync failed', e); break; }
+  }
+  syncing = false;
+  refreshSyncLabel();
+  if(failed) setSync('err', 'Sync failed — will retry ('+orders.filter(o=>!o.synced).length+' waiting)');
+  if(showMsg) toast(failed ? 'Could not reach Google Sheet. Check internet / URL.' : (done ? `Synced ${done} sale(s)` : 'Everything already synced'));
+}
+setInterval(syncPending, 60000);
+window.addEventListener('online', ()=>syncPending());
+
+/* ---------- Sales ---------- */
+function filtered(){
+  const f = $('from').value, t = $('to').value;
+  return orders.filter(o=>{ const d = ymd(o.date); return (!f||d>=f) && (!t||d<=t); });
+}
+function renderSales(){
+  const list = filtered();
+  const total = list.reduce((s,o)=>s+o.total,0);
+  const byPay = {}; list.forEach(o=>byPay[o.payment]=(byPay[o.payment]||0)+o.total);
+  const itemsSold = list.reduce((s,o)=>s+o.items.reduce((a,i)=>a+i.qty,0),0);
+  $('stats').innerHTML = [
+    ['Total sales', money(total)], ['Orders', list.length], ['Avg. order', money(list.length?total/list.length:0)], ['Items sold', itemsSold],
+    ...Object.entries(byPay).map(([k,v])=>[k, money(v)])
+  ].map(([k,v])=>`<div class="card stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join('');
+
+  const agg = {};
+  list.forEach(o=>o.items.forEach(i=>{ agg[i.name]=agg[i.name]||{qty:0,amt:0}; agg[i.name].qty+=i.qty; agg[i.name].amt+=i.amount; }));
+  const top = Object.entries(agg).sort((a,b)=>b[1].amt-a[1].amt).slice(0,10);
+  $('topTable').innerHTML = '<tr><th>Item</th><th class="num">Qty</th><th class="num">Amount</th></tr>' +
+    (top.map(([n,v])=>`<tr><td>${esc(n)}</td><td class="num">${v.qty}</td><td class="num">${money(v.amt)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No sales in this period</td></tr>');
+
+  $('salesTable').innerHTML = '<tr><th>Bill</th><th>Time</th><th>Type</th><th>Items</th><th>Payment</th><th class="num">Total</th><th>Sheet</th><th></th></tr>' +
+    (list.slice().reverse().map(o=>`<tr>
+      <td>${esc(o.id)}</td><td>${new Date(o.date).toLocaleString()}</td>
+      <td>${esc(o.type)}${o.table?' · '+esc(o.table):''}</td>
+      <td>${o.items.map(i=>esc(i.qty+'× '+i.name)).join(', ')}</td>
+      <td>${esc(o.payment)}</td><td class="num"><b>${money(o.total)}</b></td>
+      <td>${o.synced?'<span class="badge ok">Saved</span>':'<span class="badge pending">Pending</span>'}</td>
+      <td><button class="btn secondary small" data-r="${esc(o.id)}">Reprint</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No orders</td></tr>');
+  $('salesTable').querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>printReceipt(orders.find(o=>o.id===b.dataset.r)));
+}
+$('from').onchange = $('to').onchange = renderSales;
+$('todayBtn').onclick = ()=>{ $('from').value=$('to').value=ymd(new Date()); renderSales(); };
+$('syncBtn').onclick = async ()=>{ await syncPending(true); renderSales(); };
+
+function exportRows(){
+  const list = filtered();
+  const sales = list.map(o=>({'Bill No':o.id,'Date':ymd(o.date),'Time':new Date(o.date).toLocaleTimeString(),'Type':o.type,'Table/Ref':o.table,'Customer':o.customer,
+    'Items':o.items.map(i=>i.qty+'x '+i.name).join(', '),'Subtotal':o.subtotal,'Discount':o.discount,'Service':o.service,'Tax':o.tax,'Total':o.total,'Payment':o.payment,'Paid':o.paid,'Change':o.change,'Note':o.note}));
+  const items = []; list.forEach(o=>o.items.forEach(i=>items.push({'Bill No':o.id,'Date':ymd(o.date),'Item':i.name,'Category':i.category,'Price':i.price,'Qty':i.qty,'Amount':i.amount})));
+  return {sales, items};
+}
+function fname(ext){ return `sales_${$('from').value||'all'}_to_${$('to').value||'all'}.${ext}`; }
+$('xlsxBtn').onclick = ()=>{
+  if(typeof XLSX==='undefined'){ toast('Excel library needs internet — using CSV instead'); return $('csvBtn').onclick(); }
+  const {sales, items} = exportRows();
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sales), 'Sales');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(items), 'Items');
+  XLSX.writeFile(wb, fname('xlsx'));
+};
+$('csvBtn').onclick = ()=>{
+  const {sales} = exportRows();
+  if(!sales.length) return toast('No sales to export');
+  const cols = Object.keys(sales[0]);
+  const csv = [cols, ...sales.map(r=>cols.map(c=>r[c]))].map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  download(new Blob(['﻿'+csv],{type:'text/csv'}), fname('csv'));
+};
+function download(blob, name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+
+/* ---------- Menu management ---------- */
+let editingId = null;
+function renderMenuTable(){
+  $('catList').innerHTML = [...new Set(menu.map(m=>m.category))].map(c=>`<option value="${esc(c)}">`).join('');
+  const sorted = menu.slice().sort((a,b)=>(a.category||'').localeCompare(b.category||'')||a.name.localeCompare(b.name));
+  $('menuTable').innerHTML = '<tr><th>Name</th><th>Category</th><th class="num">Price</th><th></th></tr>' + sorted.map(m=>`
+    <tr><td>${esc(m.name)}</td><td>${esc(m.category)}</td><td class="num">${money(m.price)}</td>
+    <td style="text-align:right;white-space:nowrap"><button class="btn secondary small" data-e="${esc(m.id)}">Edit</button> <button class="btn danger small" data-x="${esc(m.id)}">Delete</button></td></tr>`).join('');
+  $('menuTable').querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{
+    const m = menu.find(x=>x.id===b.dataset.e); editingId=m.id;
+    $('mName').value=m.name; $('mPrice').value=m.price; $('mCat').value=m.category;
+    $('menuFormTitle').textContent='Edit menu item'; $('mCancel').style.display='';
+    $('mName').focus();
+  });
+  $('menuTable').querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{
+    const m = menu.find(x=>x.id===b.dataset.x);
+    if(confirm('Delete "'+m.name+'"?')){ menu=menu.filter(x=>x.id!==m.id); saveMenu(); }
+  });
+}
+function saveMenu(){ LS.set('menu',menu); renderMenuTable(); renderCats(); renderGrid(); }
+function resetMenuForm(){ editingId=null; $('mName').value=$('mPrice').value=$('mCat').value=''; $('menuFormTitle').textContent='Add menu item'; $('mCancel').style.display='none'; }
+$('mSave').onclick = ()=>{
+  const name=$('mName').value.trim(), price=Number($('mPrice').value), category=$('mCat').value.trim()||'Other';
+  if(!name || !(price>=0) || $('mPrice').value==='') return toast('Enter a name and price');
+  if(editingId) Object.assign(menu.find(m=>m.id===editingId), {name,price,category});
+  else menu.push({id:'m'+Date.now(), name, price, category});
+  resetMenuForm(); saveMenu(); toast('Menu saved');
+};
+$('mCancel').onclick = resetMenuForm;
+
+/* ---------- Settings ---------- */
+function loadSettingsForm(){
+  $('sName').value=settings.shopName; $('sAddr').value=settings.address; $('sCur').value=settings.currency;
+  $('sSvc').value=settings.servicePct; $('sTax').value=settings.taxPct; $('sFoot').value=settings.footer; $('sUrl').value=settings.sheetUrl;
+}
+function readSettingsForm(){
+  settings = {shopName:$('sName').value.trim()||'My Restaurant', address:$('sAddr').value.trim(), currency:$('sCur').value.trim()||'Rs.',
+    servicePct:Number($('sSvc').value)||0, taxPct:Number($('sTax').value)||0, footer:$('sFoot').value, sheetUrl:$('sUrl').value.trim()};
+}
+$('sSave').onclick = ()=>{ readSettingsForm(); LS.set('settings',settings); applySettings(); toast('Settings saved'); syncPending(); };
+$('sTest').onclick = async ()=>{
+  readSettingsForm();
+  if(!settings.sheetUrl) return toast('Paste your Web App URL first');
+  try{ await postToSheet({action:'ping'}); toast('✅ Connected to Google Sheet!'); }
+  catch(e){ toast('❌ Could not connect: '+e.message); }
+};
+function applySettings(){ $('hdrName').textContent=settings.shopName; document.title=settings.shopName+' POS'; renderGrid(); renderCart(); refreshSyncLabel(); }
+
+$('backupBtn').onclick = ()=>download(new Blob([JSON.stringify({settings,menu,orders},null,2)],{type:'application/json'}), 'pos-backup-'+ymd(new Date())+'.json');
+$('restoreBtn').onclick = ()=>$('restoreFile').click();
+$('restoreFile').onchange = e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{
+    const d=JSON.parse(t);
+    if(!confirm('This replaces the current menu, settings and sales on this computer. Continue?')) return;
+    if(d.settings) settings=d.settings; if(d.menu) menu=d.menu; if(d.orders) orders=d.orders;
+    LS.set('settings',settings); LS.set('menu',menu); LS.set('orders',orders);
+    loadSettingsForm(); applySettings(); renderCats(); toast('Backup restored');
+  }).catch(()=>toast('Invalid backup file'));
+  e.target.value='';
+};
+
+/* ---------- init ---------- */
+$('from').value = $('to').value = ymd(new Date());
+renderCats(); applySettings(); syncPending();
+</script>
+</body>
+</html>
